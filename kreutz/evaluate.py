@@ -81,13 +81,39 @@ def moves(chain):
     return moved >= max(MOVE_MIN_PX, MOVE_FRAC * expect)
 
 
+# Constant false-alarm rate: a window's threshold is the base threshold or
+# its CFAR_K-th highest candidate score, whichever is higher. A normal
+# 8-frame window has ~4 candidates above 6 sigma; in eclipse season
+# (Aug-Oct 2026) GOES-19 passes through Earth's shadow near 05 UTC, frames
+# are disturbed by stray light from ~03:45 to 07:15, and the background and
+# star models built from them stay contaminated for hours after, so
+# windows at 07-08 UTC have ~50 candidates above 6 sigma: structured
+# residue that stacks like a track. 80% of the archive's unexplained
+# tracks fired there. With CFAR_K = 10 those windows need a much higher
+# score, the rest are untouched, and all 47 known comets in the Aug-Oct
+# 2026 archive are still found while unexplained tracks drop by 77%.
+# July 2025 shows no such window; the rule only engages where it's needed.
+CFAR_K = 10
+
+
+def window_thresholds(by_time, threshold, k=CFAR_K):
+    """{window time: threshold} per the CFAR rule."""
+    out = {}
+    for t, cands in by_time.items():
+        s = sorted((c["score"] for c in cands), reverse=True)
+        out[t] = max(threshold, s[k - 1]) if len(s) >= k else threshold
+    return out
+
+
 def tracks(by_time, threshold, link):
-    """Chains of candidates in consecutive windows, each >= threshold."""
+    """Chains of candidates in consecutive windows, each >= its window's
+    threshold (window_thresholds)."""
     times = sorted(by_time)
+    thr = window_thresholds(by_time, threshold)
     open_ = []  # chains still growing
     done = []
     for t in times:
-        cands = [c for c in by_time[t] if c["score"] >= threshold]
+        cands = [c for c in by_time[t] if c["score"] >= thr[t]]
         used = set()
         grown = []
         for ch in open_:

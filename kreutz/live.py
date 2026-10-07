@@ -36,7 +36,8 @@ import numpy as np
 from PIL import Image
 
 from . import DATA
-from .evaluate import FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz, report_points
+from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
+                       report_points)
 from .lane import build_field, in_lane
 from .reports import _fetch, parse
 from .frames import BG_FRAMES, BG_SKIP, L1B, STAR_FRAMES, Sequence, frame_paths
@@ -195,6 +196,14 @@ def main():
                 continue
             for c in cands:
                 c["time"] = t.isoformat()
+            # Constant false-alarm rate (evaluate.window_thresholds): a window
+            # with many candidates above threshold is a disturbed one.
+            top = sorted((c["score"] for c in cands), reverse=True)
+            thr = max(args.threshold, top[CFAR_K - 1]) if len(top) >= CFAR_K else args.threshold
+            if thr > args.threshold:
+                print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, threshold raised to {thr:.1f}",
+                      file=sys.stderr)
+                cands = [c for c in cands if c["score"] >= thr]
             # link onto open chains
             grown, used = [], set()
             for ch in chains:
