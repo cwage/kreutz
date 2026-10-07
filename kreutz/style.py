@@ -114,8 +114,10 @@ def render(src, preset):
     lo, hi = limits(crop_p if p["ref"] == "crop" else field_p, p)
     label = 255 if p["tint"] is None else p["tint"][1]
     out = src / f"style-{preset}"
-    (out / "crop").mkdir(parents=True, exist_ok=True)
-    (out / "field").mkdir(exist_ok=True)
+    for sub in ("crop", "field"):
+        (out / sub).mkdir(parents=True, exist_ok=True)
+        for old in (out / sub).glob("*.png"):  # a re-render may have fewer frames
+            old.unlink()
     crop_frames, field_frames = [], []
     for k in range(len(times)):
         tag = f"{times[k][:10]} {times[k][11:16]} UTC"

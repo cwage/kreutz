@@ -6,10 +6,10 @@
 Starting from one detection (a time, position and velocity in report
 coordinates, as the search and shortlist record them), the object is
 followed through the significance maps forward and backward until it is
-lost (--lost consecutive misses) or the span runs out (--back/--ahead
-frames), refitting its velocity as it goes so acceleration over hours
-doesn't lose it, and stepping by elapsed time so a gap in the data doesn't
-either. Then into data/render/<name>/:
+lost (--lost consecutive misses), the span runs out (--back/--ahead
+frames) or the data has a gap longer than MAX_GAP frames, refitting its
+velocity as it goes so acceleration over hours doesn't lose it, and
+stepping by elapsed time so a short gap in the data doesn't either. Then into data/render/<name>/:
 
     track.json      per frame: time, position (report coords), the
                     significance peak if it was seen, else interpolated
@@ -46,6 +46,8 @@ from .frames import BG_FRAMES, BG_SKIP, CADENCE, STAR_FRAMES, Sequence, frame_pa
 
 FOLLOW_R = 4        # px around the prediction to look for the peak
 GAP_R = 2           # extra px of search radius per frame of data gap
+MAX_GAP = 8         # frames; beyond this the background model is stale and
+                    # a widened search box finds noise, so the track ends
 PEAK_SIGMA = 4.0    # a frame counts when the significance peak reaches this
 FIT_POINTS = 6      # recent accepted points the velocity is refit from
 CROP_HALF = 60
@@ -84,6 +86,8 @@ def follow(seq, i0, x, y, vx, vy, back, ahead, lost):
             if not 0 <= i < len(seq.paths):
                 break
             dt = frames_since(i, i_prev)  # signed; negative going back
+            if abs(dt) > MAX_GAP:
+                break
             qx, qy = px + cvx * dt, py + cvy * dt
             radius = FOLLOW_R + int(round(GAP_R * max(abs(dt) - 1, 0)))
             h = seen(i, qx, qy, radius)
