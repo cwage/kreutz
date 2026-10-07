@@ -19,12 +19,14 @@ by position. A track in the Kreutz lane (lane.in_lane) while another
 instrument has a Kreutz comet in view counts as that comet, matched "by
 time+lane"; the alert for anything else lists such reports as a hint.
 
---notify CMD runs CMD with the alert's .json path as its argument.
+--notify CMD runs CMD with the alert's .json path appended, e.g.
+--notify "python -m kreutz.notify" to post to an ntfy topic (notify.py).
 """
 
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -168,6 +170,7 @@ def main():
     ap.add_argument("--notify", help="command run with the alert .json path as argument")
     args = ap.parse_args()
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
+    (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
     done = set()
     chains = []  # open tracks, as in evaluate.tracks
@@ -265,7 +268,7 @@ def main():
                     print(f"ALERT {stem}{hint}", flush=True)
                     if args.notify:
                         try:
-                            subprocess.Popen([args.notify, str(stem.with_suffix(".json"))])
+                            subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])
                         except OSError as e:
                             print(f"notify failed: {e}", file=sys.stderr)
         if new == 0:

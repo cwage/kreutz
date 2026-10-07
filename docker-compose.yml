@@ -14,6 +14,9 @@ services:
     # instead of all of them fanning out across every core.
     cpus: ${KREUTZ_CPUS:-1.5}
     environment:
+      # For kreutz.notify (the live watcher's --notify): where alerts go.
+      NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
