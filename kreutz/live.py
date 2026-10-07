@@ -6,16 +6,26 @@ Polls the SWPC directory for new L1b frames, files them where the archive
 fetcher does (data/ccor1/l1b/YYYY/MM/DD/), and searches each new window as
 it lands. Candidates are linked across windows exactly as in evaluate.py;
 when a track fires it's checked against Sungrazer's latest reports: one
-somebody already reported is logged to data/live/known.jsonl and the watch
-goes on; anything else (and not already vetted into known.jsonl) is
-written to data/live/alerts/<time>.json with a crop animation beside it,
-and the watcher exits so whoever started it can look. Starting it again resumes
-from where the frames on disk leave off.
+somebody already reported from CCOR-1 is logged to data/live/known.jsonl
+and the watch goes on; anything else (and not already vetted into
+known.jsonl) is written to data/live/alerts/<time>.json with a crop
+animation beside it, remembered so it isn't raised again, and the watch
+goes on. Every outcome (alert, star, already reported) is appended to
+data/live/log.jsonl with the wall-clock time it was decided, which is
+what score.py turns into a table of leads and lags against the reports.
+
+Kreutz reports from other coronagraphs (CCOR-2, LASCO) can't be matched
+by position, so an alert also lists any Kreutz report from another
+instrument whose observations fall in the day before the track: a strong
+hint that the object is already known, left for a person to judge.
+
+--notify CMD runs CMD with the alert's .json path as its argument.
 """
 
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -95,17 +105,60 @@ def remember(c, why):
         fh.write(json.dumps({k: c[k] for k in ("time", "x", "y", "vx", "vy")} | {"why": why}) + "\n")
 
 
-def reported_by(track, t):
-    """Who reported this track on Sungrazer already, if anyone."""
-    track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
+OTHER_BEFORE = timedelta(hours=24)
+OTHER_AFTER = timedelta(hours=2)
+
+
+def latest_reports():
     try:
-        reps = parse(_fetch(0)) + parse(_fetch(1))
+        return parse(_fetch(0)) + parse(_fetch(1))
     except Exception:
-        return None  # can't tell; treat as new and let a human check
+        return None  # the site hiccups; treat as unknown and let a human check
+
+
+def reported_by(track, t, reps):
+    """The CCOR-1 report this track matches by position, if any."""
+    track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
     for r, pts, posted in report_points(reps, t.date()):
         if matches(track, pts):
             return f"{r['reporter']} {r['id']}"
     return None
+
+
+def other_instruments(track, reps):
+    """Kreutz reports from instruments other than CCOR-1 whose observed
+    times (or, without points, posting time) fall within OTHER_BEFORE of
+    the track's first frame to OTHER_AFTER of its last. These can't be
+    matched by position; they're listed for a person."""
+    t0 = datetime.fromisoformat(track[0]["time"]) - OTHER_BEFORE
+    t1 = datetime.fromisoformat(track[-1]["time"]) + OTHER_AFTER
+    out = []
+    for r in reps or []:
+        if r.get("group") != "Kreutz" or r.get("telescope") in (None, "CCOR1"):
+            continue
+        if r.get("kind") not in ("Potential Comet", "Additional Observations",
+                                  "Known Comet Now Entering"):
+            continue
+        posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
+        times = []
+        for hhmm, _, _ in r["points"]:
+            ot = posted.replace(hour=int(hhmm[:2]), minute=int(hhmm[2:]), second=0)
+            times.append(ot - timedelta(days=1) if ot > posted else ot)
+        if not times:
+            times = [posted]
+        if any(t0 <= ot <= t1 for ot in times):
+            out.append({"reporter": r["reporter"], "id": r["id"], "telescope": r["telescope"],
+                        "posted_utc": r["posted_utc"], "kind": r["kind"]})
+    return out
+
+
+def log(kind, track, decided, **extra):
+    rec = {"kind": kind, "decided_utc": decided.isoformat(timespec="seconds"),
+           "first": track[0]["time"], "last": track[-1]["time"],
+           "x": track[-1]["x"], "y": track[-1]["y"], "vx": track[-1]["vx"], "vy": track[-1]["vy"]}
+    rec.update(extra)
+    with open(LIVE / "log.jsonl", "a") as fh:
+        fh.write(json.dumps(rec) + "\n")
 
 
 def animation(seq, track, path):
@@ -135,6 +188,7 @@ def main():
     ap.add_argument("--threshold", type=float, default=5.5)
     ap.add_argument("--link", type=int, default=3)
     ap.add_argument("--n", type=int, default=4)
+    ap.add_argument("--notify", help="command run with the alert .json path as argument")
     args = ap.parse_args()
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
@@ -183,23 +237,42 @@ def main():
                 if len(ch) == args.link and not is_known(ch[-1], t) \
                         and moves([dict(c, t=datetime.fromisoformat(c["time"])) for c in ch]):
                     c = ch[-1]
+                    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                     m = follow(seq, last, c["x"], c["y"], c["vx"], c["vy"])
                     if m.is_star:
                         remember(c, f"auto: moves with the stars ({m.vx:+.2f},{m.vy:+.2f}) "
                                     f"vs drift ({m.star_vx:+.2f},{m.star_vy:+.2f})")
+                        log("star", ch, now_utc)
                         print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is a star", file=sys.stderr)
                         continue
-                    who = reported_by(ch, t)
+                    reps = latest_reports()
+                    who = reported_by(ch, t, reps) if reps else None
+                    others = other_instruments(ch, reps)
                     if who:
-                        remember(ch[-1], f"reported: {who}")
-                        print(f"{t:%H:%M} track at ({ch[-1]['x']:.0f},{ch[-1]['y']:.0f}) "
+                        remember(c, f"reported: {who}")
+                        log("reported", ch, now_utc, report=who, others=others)
+                        print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) "
                               f"already reported ({who})", file=sys.stderr)
                         continue
-                    stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{ch[-1]['x']:.0f}_{ch[-1]['y']:.0f}"
-                    stem.with_suffix(".json").write_text(json.dumps(ch, indent=1))
-                    animation(seq, ch, stem.with_suffix(".gif"))
-                    print(f"ALERT {stem}")
-                    return
+                    stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
+                    stem.with_suffix(".json").write_text(json.dumps(
+                        {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
+                         "reports_checked": reps is not None, "other_instruments": others}, indent=1))
+                    try:
+                        animation(seq, ch, stem.with_suffix(".gif"))
+                    except Exception as e:
+                        print(f"{t:%H:%M} animation failed: {e}", file=sys.stderr)
+                    remember(c, f"alert: {stem.name}")
+                    log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
+                        reports_checked=reps is not None, others=others)
+                    hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
+                        if others else ""
+                    print(f"ALERT {stem}{hint}", flush=True)
+                    if args.notify:
+                        try:
+                            subprocess.Popen([args.notify, str(stem.with_suffix(".json"))])
+                        except OSError as e:
+                            print(f"notify failed: {e}", file=sys.stderr)
         if new == 0:
             time.sleep(POLL_S)
 

@@ -71,7 +71,8 @@ Modules, each with usage in its docstring:
 | `kreutz.weekly` | collate a span's runs into shortlist, sheets and summary |
 | `kreutz.render` | follow one detection through the frames; write the aligned cutouts as FITS cubes, the track, and a quick-look preview |
 | `kreutz.style` | pictures from a render's FITS cubes in a named preset (reference styles, copy and change) |
-| `kreutz.live` | watch the SWPC real-time feed and stop on the first unreported candidate |
+| `kreutz.live` | watch the SWPC real-time feed; alert on unreported candidates and keep going |
+| `kreutz.score` | table of the live alerts against the reports that appeared: our lead or lag |
 
 ### Pictures
 
@@ -91,6 +92,20 @@ unstretched; it is the product.
 stars sliding past), a field animation, PNG frames and a still, in one of a
 few reference presets. Styling is a matter of taste, so the presets are
 starting points to copy, not the project's opinion.
+
+### Live
+
+```
+docker compose run --rm -d kreutz kreutz.live --n 8 --threshold 6.5 [--notify /srv/kreutz/../notify.sh]
+```
+
+polls NOAA's real-time feed, searches each new window, and when a track
+fires that isn't a star and isn't already reported from CCOR-1, writes
+`data/live/alerts/<time>_<x>_<y>.json` and `.gif`, appends to
+`data/live/log.jsonl`, and keeps watching. Kreutz reports from other
+coronagraphs can't be matched by position, so the alert lists any from the
+previous day as a hint. `kreutz.score` later compares each alert with the
+reports that appeared and prints the lead or lag in minutes.
 
 ### A week at a time
 
