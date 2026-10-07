@@ -22,7 +22,8 @@ import json
 import numpy as np
 
 from . import DATA
-from .evaluate import FRAME, load, report_points, tracks
+from .evaluate import FRAME, load, other_kreutz, report_points, tracks
+from .lane import build_field, in_lane
 
 THRESHOLD = 6.0
 LINK = 3
@@ -37,8 +38,17 @@ KNOWN_GROW = 1.5
 KNOWN_HOURS = 12
 
 
-def report_tracks(days):
-    reps = [json.loads(l) for p in (DATA / "reports").glob("*.jsonl") for l in open(p)]
+def all_reports():
+    byid = {}
+    for p in sorted((DATA / "reports").glob("*.jsonl")):
+        for l in open(p):
+            r = json.loads(l)
+            byid[r["id"]] = r
+    return list(byid.values())
+
+
+def report_tracks(days, reps=None):
+    reps = reps if reps is not None else all_reports()
     out = {}
     for d in days:
         for r, pts, posted in report_points(reps, d):
@@ -49,8 +59,28 @@ def report_tracks(days):
     return list(out.values())
 
 
-def known_as(track, reps):
-    """The report whose extrapolated path this track follows, or None."""
+FRAME_ROWS = 1920  # CCOR-1 frame height, for report y <-> row
+
+
+def known_as(track, reps, others=None, field=None):
+    """(report, how) for the report this track is, or None: by position
+    along a CCOR-1 report's extrapolated path, or by time+lane for a
+    Kreutz report from another instrument (evaluate.other_kreutz)."""
+    r = _known_by_position(track, reps)
+    if r:
+        return r, "position"
+    if others and field is not None:
+        c = track[-1]
+        t0, t1 = track[0]["t"], track[-1]["t"]
+        if in_lane(field, c["x"], c["y"], c["vx"], c["vy"], FRAME_ROWS):
+            hits = other_kreutz(others, t0, t1)
+            if hits:
+                o = hits[0]
+                return {"reporter": o["reporter"], "id": f"{o['id']} ({o['telescope']})"}, "time+lane"
+    return None
+
+
+def _known_by_position(track, reps):
     for r, pts in reps:
         (t0, x0, y0), (t1, x1, y1) = pts[0], pts[-1]
         n = (t1 - t0) / FRAME
@@ -82,16 +112,20 @@ def shortlist(runs, threshold=THRESHOLD, link=LINK, start=None, end=None):
     if not by_time:
         return []
     days = sorted({t.date() for t in by_time})
-    reps = report_tracks(days)
+    all_reps = all_reports()
+    reps = report_tracks(days, all_reps)
+    field = build_field((FRAME_ROWS, 2048))
     out = []
     for tr in tracks(by_time, threshold, link):
         fire = tr[link - 1]
-        k = known_as(tr, reps)
+        k = known_as(tr, reps, all_reps, field)
         rec = {"time": fire["time"], "x": fire["x"], "y": fire["y"],
                "vx": fire["vx"], "vy": fire["vy"], "windows": len(tr),
                "scores": [c["score"] for c in tr]}
         if k:
+            k, how = k
             rec["known"] = f"{k['reporter']} {k['id']}"
+            rec["known_how"] = how
         else:
             rec["persistence"] = _persist(tr, link)
         out.append(rec)

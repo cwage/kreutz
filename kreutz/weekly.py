@@ -78,7 +78,8 @@ def summary(start, end, records, cands, known, to_vet, counts, sheets):
     lines += ["", "Reported comets seen (brightest first):"]
     for r in known:
         lines.append(f"  {r['time'][:16]} ({r['x']:.0f},{r['y']:.0f}) v=({r['vx']:+.1f},{r['vy']:+.1f}) "
-                     f"peak {max(r['scores']):.1f} over {r['windows']} windows  {r['known']}")
+                     f"peak {max(r['scores']):.1f} over {r['windows']} windows  {r['known']}"
+                     + (" [by time+lane]" if r.get("known_how") == "time+lane" else ""))
     lines += ["", "To look at (sheet numbers match to-vet.json order):"]
     for n, r in enumerate(to_vet):
         tag = f"persistence {r['persistence']:+.1f}" if "persistence" in r else r["known"]

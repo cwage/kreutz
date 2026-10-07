@@ -40,6 +40,9 @@ class Field:
     band: np.ndarray      # bool, (h, w) inside the box
     vrow: np.ndarray      # flow per frame, array coords (row, col), (h, w)
     vcol: np.ndarray
+    tree: object          # cKDTree of the samples' (row, col), for in_lane
+    svr: np.ndarray       # the samples' flow, array coords
+    svc: np.ndarray
 
 
 def build_field(shape, samples=None):
@@ -64,7 +67,7 @@ def build_field(shape, samples=None):
     w = 1 / (d + 5.0)
     vrow = ((vr[k] * w).sum(1) / w.sum(1)).reshape(hh, ww).astype(np.float32)
     vcol = ((vc[k] * w).sum(1) / w.sum(1)).reshape(hh, ww).astype(np.float32)
-    return Field(slice(r0, r1), slice(c0, c1), band, vrow, vcol)
+    return Field(slice(r0, r1), slice(c0, c1), band, vrow, vcol, tree, vr, vc)
 
 
 def _flow_at(field, rr, cc):
@@ -73,6 +76,27 @@ def _flow_at(field, rr, cc):
     i = np.clip(np.round(rr - field.rows.start).astype(int), 0, field.vrow.shape[0] - 1)
     j = np.clip(np.round(cc - field.cols.start).astype(int), 0, field.vrow.shape[1] - 1)
     return field.vrow[i, j], field.vcol[i, j]
+
+
+# For deciding a track is a Kreutz-lane object (not for searching): within
+# MATCH_PX of a lane sample and moving within MATCH_DV of the samples'
+# flow there. Looser than the search band because the lane shifts through
+# the season and the samples cover Aug-Oct 2026.
+MATCH_PX = 150
+MATCH_DV = 3.0
+
+
+def in_lane(field, x, y, vx, vy, H):
+    """Is a track (report coords) in the Kreutz lane, moving with its
+    flow? Used to decide that a Kreutz report from another instrument at
+    the same time is the same object."""
+    r, c = H - 1 - y, x
+    d, k = field.tree.query([r, c], k=min(K_NEAREST, len(field.svr)))
+    if d.min() > MATCH_PX:
+        return False
+    w = 1 / (d + 5.0)
+    fvr, fvc = (field.svr[k] * w).sum() / w.sum(), (field.svc[k] * w).sum() / w.sum()
+    return bool(np.hypot(fvc - vx, -fvr - vy) <= MATCH_DV)
 
 
 def lane_search(seq: Sequence, last: int, n: int, threshold: float, field: Field):

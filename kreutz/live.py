@@ -15,9 +15,9 @@ data/live/log.jsonl with the wall-clock time it was decided, which is
 what score.py turns into a table of leads and lags against the reports.
 
 Kreutz reports from other coronagraphs (CCOR-2, LASCO) can't be matched
-by position, so an alert also lists any Kreutz report from another
-instrument whose observations fall in the day before the track: a strong
-hint that the object is already known, left for a person to judge.
+by position. A track in the Kreutz lane (lane.in_lane) while another
+instrument has a Kreutz comet in view counts as that comet, matched "by
+time+lane"; the alert for anything else lists such reports as a hint.
 
 --notify CMD runs CMD with the alert's .json path as its argument.
 """
@@ -36,7 +36,8 @@ import numpy as np
 from PIL import Image
 
 from . import DATA
-from .evaluate import FRAME, LINK_DV, LINK_PX, matches, moves, report_points
+from .evaluate import FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz, report_points
+from .lane import build_field, in_lane
 from .reports import _fetch, parse
 from .frames import BG_FRAMES, BG_SKIP, L1B, STAR_FRAMES, Sequence, frame_paths
 from .search import consistent, search
@@ -105,10 +106,6 @@ def remember(c, why):
         fh.write(json.dumps({k: c[k] for k in ("time", "x", "y", "vx", "vy")} | {"why": why}) + "\n")
 
 
-OTHER_BEFORE = timedelta(hours=24)
-OTHER_AFTER = timedelta(hours=2)
-
-
 def latest_reports():
     try:
         return parse(_fetch(0)) + parse(_fetch(1))
@@ -126,30 +123,9 @@ def reported_by(track, t, reps):
 
 
 def other_instruments(track, reps):
-    """Kreutz reports from instruments other than CCOR-1 whose observed
-    times (or, without points, posting time) fall within OTHER_BEFORE of
-    the track's first frame to OTHER_AFTER of its last. These can't be
-    matched by position; they're listed for a person."""
-    t0 = datetime.fromisoformat(track[0]["time"]) - OTHER_BEFORE
-    t1 = datetime.fromisoformat(track[-1]["time"]) + OTHER_AFTER
-    out = []
-    for r in reps or []:
-        if r.get("group") != "Kreutz" or r.get("telescope") in (None, "CCOR1"):
-            continue
-        if r.get("kind") not in ("Potential Comet", "Additional Observations",
-                                  "Known Comet Now Entering"):
-            continue
-        posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
-        times = []
-        for hhmm, _, _ in r["points"]:
-            ot = posted.replace(hour=int(hhmm[:2]), minute=int(hhmm[2:]), second=0)
-            times.append(ot - timedelta(days=1) if ot > posted else ot)
-        if not times:
-            times = [posted]
-        if any(t0 <= ot <= t1 for ot in times):
-            out.append({"reporter": r["reporter"], "id": r["id"], "telescope": r["telescope"],
-                        "posted_utc": r["posted_utc"], "kind": r["kind"]})
-    return out
+    """Kreutz reports from other instruments around the track's time."""
+    return other_kreutz(reps, datetime.fromisoformat(track[0]["time"]),
+                        datetime.fromisoformat(track[-1]["time"]))
 
 
 def log(kind, track, decided, **extra):
@@ -194,6 +170,7 @@ def main():
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
     done = set()
     chains = []  # open tracks, as in evaluate.tracks
+    field = None  # the Kreutz lane, built once a frame shape is known
     while True:
         try:
             new = sync(datetime.now(timezone.utc).replace(tzinfo=None) - history - timedelta(hours=1))
@@ -203,6 +180,8 @@ def main():
             continue
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         seq = Sequence(frame_paths(now - history - timedelta(hours=2), now))
+        if field is None:
+            field = build_field(seq.shape)
         todo = [i for i, t in enumerate(seq.times)
                 if t not in done and i >= BG_FRAMES + BG_SKIP + args.n]
         for last in todo:
@@ -248,11 +227,17 @@ def main():
                     reps = latest_reports()
                     who = reported_by(ch, t, reps) if reps else None
                     others = other_instruments(ch, reps)
+                    how = "position"
+                    if not who and others and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
+                        # A lane track while another coronagraph has a Kreutz
+                        # comet in view: the same object.
+                        o = others[0]
+                        who, how = f"{o['reporter']} {o['id']} ({o['telescope']})", "time+lane"
                     if who:
                         remember(c, f"reported: {who}")
-                        log("reported", ch, now_utc, report=who, others=others)
+                        log("reported", ch, now_utc, report=who, how=how, others=others)
                         print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) "
-                              f"already reported ({who})", file=sys.stderr)
+                              f"already reported ({who}, by {how})", file=sys.stderr)
                         continue
                     stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
                     stem.with_suffix(".json").write_text(json.dumps(

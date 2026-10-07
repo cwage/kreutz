@@ -131,6 +131,37 @@ def report_points(reports, day):
     return out
 
 
+OTHER_BEFORE = timedelta(hours=24)
+OTHER_AFTER = timedelta(hours=2)
+OTHER_KINDS = ("Potential Comet", "Additional Observations", "Known Comet Now Entering")
+
+
+def other_kreutz(reports, t_first, t_last):
+    """Kreutz reports from instruments other than CCOR-1 whose observed
+    times (or, without points, posting time) fall within OTHER_BEFORE of
+    t_first to OTHER_AFTER of t_last. Their pixel coordinates can't be
+    compared with ours, so this is matching by time; for a track in the
+    Kreutz lane (lane.in_lane) that's nearly always the same object, since
+    Kreutz comets arrive one at a time along one path."""
+    t0, t1 = t_first - OTHER_BEFORE, t_last + OTHER_AFTER
+    out = []
+    for r in reports or []:
+        if r.get("group") != "Kreutz" or r.get("telescope") in (None, "CCOR1") \
+                or r.get("kind") not in OTHER_KINDS:
+            continue
+        posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
+        times = []
+        for hhmm, _, _ in r["points"]:
+            ot = posted.replace(hour=int(hhmm[:2]), minute=int(hhmm[2:]), second=0)
+            times.append(ot - timedelta(days=1) if ot > posted else ot)
+        if not times:
+            times = [posted]
+        if any(t0 <= ot <= t1 for ot in times):
+            out.append({"reporter": r["reporter"], "id": r["id"], "telescope": r["telescope"],
+                        "posted_utc": r["posted_utc"], "kind": r["kind"]})
+    return sorted(out, key=lambda o: o["posted_utc"])
+
+
 def matches(track, pts):
     """Does the track pass within MATCH_PX of the report at a shared time?
     Positions are extrapolated along the track's velocity to report times
