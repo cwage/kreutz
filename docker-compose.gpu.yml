@@ -1,0 +1,11 @@
+# Opt-in GPU search (search._stack falls back to numpy without it):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml run ...
+services:
+  kreutz:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,19 @@
+services:
+  kreutz:
+    build: .
+    # Run as the host user so files written to the bind mount aren't
+    # root-owned (this host runs rootful docker).
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./data:/data
+      # Code is bind-mounted so edits don't need a rebuild; only
+      # requirements.txt changes do.
+      - ./kreutz:/srv/kreutz:ro
+    # Each container gets at most this much CPU, and the numeric libraries
+    # one thread each: several runs side by side add up to a known load
+    # instead of all of them fanning out across every core.
+    cpus: ${KREUTZ_CPUS:-1.5}
+    environment:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
