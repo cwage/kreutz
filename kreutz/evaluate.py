@@ -43,8 +43,13 @@ def load(paths):
     (so runs made before a filter was added still score consistently)."""
     from .search import EDGE_PX, R_MIN, SPEED_MIN, consistent
     by_time = defaultdict(list)
+    seen = set()  # the same window searched twice (a day rerun in chunks) counts once
     for ln in (ln for p in paths for ln in open(p)):
         c = json.loads(ln)
+        key = (c["time"], c["x"], c["y"], c["vx"], c["vy"])
+        if key in seen:
+            continue
+        seen.add(key)
         if np.hypot(c["vx"], c["vy"]) < SPEED_MIN:
             continue
         if np.hypot(c["x"] - SUN_XY[0], c["y"] - SUN_XY[1]) < R_MIN:
