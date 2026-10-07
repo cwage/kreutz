@@ -23,6 +23,11 @@ from .frames import CADENCE, Sequence
 
 CLIP_SIGMA = 5.0
 SPEED_MAX = 12.5
+# A window may be missing this many frames (a 30-minute gap is a single
+# missing frame, and those are the common kind: 13 of the 14 gaps in the
+# July 2025 benchmark week). The frames present are stacked at their true
+# time offsets; the score is normalized by how many there are.
+MAX_MISSING = 1
 # Below this a "track" is something that doesn't move: a pixel that
 # flickers for a frame or two (first live alert, 2026-10-05 00:00, was
 # one). Of 81 Kreutz tracks reported in July-August 2025 only a couple
@@ -101,19 +106,39 @@ def _roi(seq: Sequence):
     return box, m[box]
 
 
-def _offsets(vel, n, pad):
-    """(velocity, frame) -> (row, col) slice origin in the padded frames."""
-    back = np.arange(n - 1, -1, -1)  # frames before the last, per frame k
+def window_frames(seq: Sequence, last: int, n: int):
+    """Indices of the frames in the n-frame window ending at `last` and
+    how many frames before `last` each is, oldest first; raises if more
+    than MAX_MISSING are absent."""
+    idx, back = [], []
+    i = last
+    while i >= 0:
+        k = round((seq.times[last] - seq.times[i]) / CADENCE)
+        if k > n - 1:
+            break
+        idx.append(i)
+        back.append(k)
+        i -= 1
+    if len(idx) < n - MAX_MISSING:
+        span = seq.times[last] - seq.times[max(last - (n - 1), 0)]
+        raise ValueError(f"window spans a data gap ({span})")
+    return idx[::-1], np.array(back[::-1])
+
+
+def _offsets(vel, back, pad):
+    """(velocity, frame) -> (row, col) slice origin in the padded frames;
+    `back` is how many frames before the last each frame is."""
     drow, dcol = -vel[:, 1], vel[:, 0]  # report (vx, vy) -> array (drow, dcol)
     r0 = pad - np.round(drow[:, None] * back[None, :]).astype(int)
     c0 = pad - np.round(dcol[:, None] * back[None, :]).astype(int)
     return r0, c0
 
 
-def _stack(frames, vel, n, pad, h, w):
+def _stack(frames, vel, back, pad, h, w):
     """Best stacked sum over velocities per pixel, and which velocity.
     On the GPU when there is one (~50x faster), numpy otherwise."""
-    r0, c0 = _offsets(vel, n, pad)
+    n = len(frames)
+    r0, c0 = _offsets(vel, back, pad)
     if _torch() is not None:
         torch = _torch()
         F = torch.from_numpy(np.stack(frames)).cuda()
@@ -155,21 +180,19 @@ def _torch():
 
 def search(seq: Sequence, last: int, n: int, threshold: float):
     """Candidates in the window of n frames ending at frame `last`."""
-    span = seq.times[last] - seq.times[last - (n - 1)]
-    if span != CADENCE * (n - 1):
-        raise ValueError(f"window spans a data gap ({span})")
+    idx, back = window_frames(seq, last, n)
     box, mask = _roi(seq)
     drow, dcol = seq.star_drift(last)
     vel = velocity_grid((dcol, -drow))
     pad = int(np.ceil(SPEED_MAX * (n - 1))) + 1
     frames = []
-    for k in range(n):
-        s = seq.significance(last - (n - 1) + k)[box]
+    for i in idx:
+        s = seq.significance(i)[box]
         s = np.clip(np.nan_to_num(s, nan=0.0), -CLIP_SIGMA, CLIP_SIGMA)
         frames.append(np.pad(s, pad))
     h, w = mask.shape
-    best, best_v = _stack(frames, vel, n, pad, h, w)
-    best /= np.sqrt(n)
+    best, best_v = _stack(frames, vel, back, pad, h, w)
+    best /= np.sqrt(len(frames))
     best[~mask] = -np.inf
 
     peaks = (best >= threshold) & (best == maximum_filter(best, size=9))
@@ -184,13 +207,11 @@ def search(seq: Sequence, last: int, n: int, threshold: float):
         if not HEADING_MIN <= heading <= HEADING_MAX:
             continue
         per = []
-        for k in range(n):
-            back = n - 1 - k
-            fr = frames[k]
-            rr = pad + r - int(round(-vy * back))
-            cc = pad + c - int(round(vx * back))
+        for fr, b in zip(frames, back):
+            rr = pad + r - int(round(-vy * b))
+            cc = pad + c - int(round(vx * b))
             per.append(round(float(fr[rr, cc]), 1))
-        if np.sum(np.asarray(per) >= FRAME_KEEP) < np.ceil(FRAME_KEEP_FRAC * n):
+        if np.sum(np.asarray(per) >= FRAME_KEEP) < np.ceil(FRAME_KEEP_FRAC * len(per)):
             continue
         out.append(Candidate(last, float(x), float(y), float(vx), float(vy),
                              round(float(best[r, c]), 2), per))

@@ -25,8 +25,8 @@ import numpy as np
 from scipy.ndimage import binary_dilation, maximum_filter
 from scipy.spatial import cKDTree
 
-from .frames import CADENCE, Sequence
-from .search import CLIP_SIGMA, FRAME_KEEP, FRAME_KEEP_FRAC, Candidate, _dedupe
+from .frames import Sequence
+from .search import CLIP_SIGMA, FRAME_KEEP, FRAME_KEEP_FRAC, Candidate, _dedupe, window_frames
 
 BAND_PX = 40
 K_NEAREST = 20
@@ -101,32 +101,35 @@ def in_lane(field, x, y, vx, vy, H):
 
 def lane_search(seq: Sequence, last: int, n: int, threshold: float, field: Field):
     """Candidates in the lane for the window of n frames ending at `last`."""
-    span = seq.times[last] - seq.times[last - (n - 1)]
-    if span != CADENCE * (n - 1):
-        raise ValueError(f"window spans a data gap ({span})")
+    idx, back = window_frames(seq, last, n)
     H, W = seq.shape
-    frames = []
-    for k in range(n):  # k = 0 is the last frame, going back
-        s = seq.significance(last - k)
-        frames.append(np.clip(np.nan_to_num(s, nan=0.0), -CLIP_SIGMA, CLIP_SIGMA))
+    # frames by how many steps before the last they are; None where missing
+    frames = [None] * n
+    for i, b in zip(idx, back):
+        s = seq.significance(i)
+        frames[b] = np.clip(np.nan_to_num(s, nan=0.0), -CLIP_SIGMA, CLIP_SIGMA)
+    present = [k for k in range(n) if frames[k] is not None]
     br, bc = np.nonzero(field.band)
     pr0 = (br + field.rows.start).astype(np.float32)
     pc0 = (bc + field.cols.start).astype(np.float32)
     best = np.full(len(br), -np.inf, np.float32)
     best_dv = np.zeros((len(br), 2), np.float32)
-    best_per = np.zeros((len(br), n), np.float32)
+    best_per = np.zeros((len(br), len(present)), np.float32)
     for dvr in DV:
         for dvc in DV:
             pr, pc = pr0.copy(), pc0.copy()
             acc = np.zeros(len(br), np.float32)
-            per = np.zeros((len(br), n), np.float32)
-            for k in range(n):
-                ir, ic = np.round(pr).astype(int), np.round(pc).astype(int)
-                ok = (ir >= 0) & (ir < H) & (ic >= 0) & (ic < W)
-                v = np.zeros(len(br), np.float32)
-                v[ok] = frames[k][ir[ok], ic[ok]]
-                acc += v
-                per[:, k] = v
+            per = np.zeros((len(br), len(present)), np.float32)
+            col = 0
+            for k in range(n):  # k steps before the last frame
+                if frames[k] is not None:
+                    ir, ic = np.round(pr).astype(int), np.round(pc).astype(int)
+                    ok = (ir >= 0) & (ir < H) & (ic >= 0) & (ic < W)
+                    v = np.zeros(len(br), np.float32)
+                    v[ok] = frames[k][ir[ok], ic[ok]]
+                    acc += v
+                    per[:, col] = v
+                    col += 1
                 # one frame back: undo one frame of motion along the flow
                 fr, fc = _flow_at(field, pr, pc)
                 pr -= fr + dvr
@@ -135,7 +138,7 @@ def lane_search(seq: Sequence, last: int, n: int, threshold: float, field: Field
             best[better] = acc[better]
             best_dv[better] = (dvr, dvc)
             best_per[better] = per[better]
-    best /= np.sqrt(n)
+    best /= np.sqrt(len(present))
 
     img = np.full(field.band.shape, -np.inf, np.float32)
     img[br, bc] = best
@@ -145,7 +148,7 @@ def lane_search(seq: Sequence, last: int, n: int, threshold: float, field: Field
     for a, b in zip(*np.nonzero(peaks)):
         i = idx[(a, b)]
         per = best_per[i][::-1]  # oldest frame first, like search.py
-        if np.sum(per >= FRAME_KEEP) < np.ceil(FRAME_KEEP_FRAC * n):
+        if np.sum(per >= FRAME_KEEP) < np.ceil(FRAME_KEEP_FRAC * len(per)):
             continue
         r, c = a + field.rows.start, b + field.cols.start
         fr, fc = _flow_at(field, np.array([r]), np.array([c]))

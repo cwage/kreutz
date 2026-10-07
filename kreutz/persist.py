@@ -64,12 +64,10 @@ def persistence(seq: Sequence, last: int, track):
     offsets = [CONTROL_OFFSET * (1 + j // 2) * (1 if j % 2 == 0 else -1)
                for j in range(CONTROL_N)]
     path, ctrl = [], [[] for _ in offsets]
-    for k in range(1, AHEAD + 1):
-        i = last + k
-        if i >= len(seq.paths):
+    for i in range(last + 1, len(seq.paths)):
+        k = (seq.times[i] - seq.times[last]) / (seq.times[1] - seq.times[0])
+        if k > AHEAD:
             break
-        if seq.times[i] - seq.times[last] != (seq.times[1] - seq.times[0]) * k:
-            break  # a gap: the extrapolation doesn't hold across it
         sig = seq.significance(i)
         x, y = x0 + vx * k, y0 + vy * k
         path.append(_peak(sig, x, y, H))

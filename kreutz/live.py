@@ -41,7 +41,7 @@ from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kr
 from .lane import build_field, in_lane
 from .reports import _fetch, parse
 from .frames import BG_FRAMES, BG_SKIP, L1B, STAR_FRAMES, Sequence, frame_paths
-from .search import consistent, search
+from .search import MAX_MISSING, consistent, search
 from .vet import follow
 
 FEED = "https://services.swpc.noaa.gov/products/ccor1/fits/"
@@ -208,11 +208,12 @@ def main():
             grown, used = [], set()
             for ch in chains:
                 prev = ch[-1]
-                if t - datetime.fromisoformat(prev["time"]) != FRAME:
+                steps = (t - datetime.fromisoformat(prev["time"])) / FRAME
+                if not 1 <= steps <= 1 + MAX_MISSING:
                     continue
-                px, py = prev["x"] + prev["vx"], prev["y"] + prev["vy"]
+                px, py = prev["x"] + prev["vx"] * steps, prev["y"] + prev["vy"] * steps
                 for k, c in enumerate(cands):
-                    if k not in used and np.hypot(c["x"] - px, c["y"] - py) <= LINK_PX \
+                    if k not in used and np.hypot(c["x"] - px, c["y"] - py) <= LINK_PX * steps \
                             and np.hypot(c["vx"] - prev["vx"], c["vy"] - prev["vy"]) <= LINK_DV:
                         used.add(k)
                         grown.append(ch + [c])

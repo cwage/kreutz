@@ -27,6 +27,7 @@ import numpy as np
 from astropy.io import fits
 
 from . import DATA
+from .search import MAX_MISSING
 
 FRAME = timedelta(minutes=15)
 # Sun center in report coords; drifts a few px, which is fine for a radius
@@ -120,11 +121,15 @@ def tracks(by_time, threshold, link):
         grown = []
         for ch in open_:
             last = ch[-1]
-            if t - last["t"] != FRAME:
+            steps = (t - last["t"]) / FRAME
+            if steps < 1:
+                continue  # an earlier skipped window; keep waiting
+            if steps > 1 + MAX_MISSING:
                 done.append(ch)
                 continue
-            px, py = last["x"] + last["vx"], last["y"] + last["vy"]
-            best, bd = None, LINK_PX
+            # across a missing frame the prediction is two frames out
+            px, py = last["x"] + last["vx"] * steps, last["y"] + last["vy"] * steps
+            best, bd = None, LINK_PX * steps
             for k, c in enumerate(cands):
                 if k in used:
                     continue
@@ -258,10 +263,16 @@ def evaluate(runs, threshold, link):
           if any(lo <= t <= hi for t, _, _ in pts)]
     rp = list({r["id"]: (r, pts, posted) for r, pts, posted in rp}.values())
     trs = tracks(by_time, threshold, link)
+    # Match as the shortlist does: along the report's path, extrapolated
+    # forward (straight) and, for Kreutz reports, backward along the lane.
+    from .lane import build_field
+    from .shortlist import FRAME_ROWS, _known_by_position
+    field = build_field((FRAME_ROWS, 2048))
     fired = []
     for tr in trs:
         fire = tr[link - 1]  # the window where it qualified
-        hit = [(r, posted) for r, pts, posted in rp if matches(tr, pts)]
+        hit = [(r, posted) for r, pts, posted in rp
+               if matches(tr, pts) or _known_by_position(tr, [(r, pts)], field) is not None]
         fired.append((tr, fire, hit))
     return fired, rp, confirmed, by_time
 

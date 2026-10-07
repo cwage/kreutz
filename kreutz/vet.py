@@ -47,6 +47,10 @@ def follow(seq: Sequence, last: int, x: float, y: float, vx: float, vy: float):
         i = last - k
         if i < 0:
             break
+        # frames before `last`, by time (a missing frame makes it jump)
+        kt = round((seq.times[last] - seq.times[i]) / (seq.times[1] - seq.times[0]))
+        if kt > FOLLOW_FRAMES:
+            break
         r0, c0 = int(round(H - 1 - py)), int(round(px))
         half = FOLLOW_R + 8
         win = seq.raw(i)[r0 - half:r0 + half + 1, c0 - half:c0 + half + 1]
@@ -60,14 +64,17 @@ def follow(seq: Sequence, last: int, x: float, y: float, vx: float, vy: float):
         fx = c0 - FOLLOW_R + cc
         fy = H - 1 - (r0 - FOLLOW_R + rr)
         if sig >= PEAK_SIGMA:
-            pts.append((i, float(fx), float(fy), float(sig)))
+            pts.append((-kt, float(fx), float(fy), float(sig)))
             px, py = fx, fy
-        # step the prediction back one frame with the current best velocity
+        # step the prediction back to the next frame on disk with the
+        # current best velocity
         if len(pts) >= 3:
             t = np.array([p[0] for p in pts])
             vx = np.polyfit(t, [p[1] for p in pts], 1)[0]
             vy = np.polyfit(t, [p[2] for p in pts], 1)[0]
-        px, py = px - vx, py - vy
+        if i - 1 >= 0:
+            dt = (seq.times[i] - seq.times[i - 1]) / (seq.times[1] - seq.times[0])
+            px, py = px - vx * dt, py - vy * dt
     if len(pts) >= 3:
         t = np.array([p[0] for p in pts])
         vx = float(np.polyfit(t, [p[1] for p in pts], 1)[0])
