@@ -73,6 +73,8 @@ Modules, each with usage in its docstring:
 | `kreutz.style` | pictures from a render's FITS cubes in a named preset (reference styles, copy and change) |
 | `kreutz.live` | watch the SWPC real-time feed; alert on unreported candidates and keep going |
 | `kreutz.score` | table of the live alerts against the reports that appeared: our lead or lag |
+| `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
+| `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
 
 ### Pictures
 
@@ -100,12 +102,18 @@ docker compose run --rm -d kreutz kreutz.live --n 8 --threshold 6.5 [--notify /s
 ```
 
 polls NOAA's real-time feed, searches each new window, and when a track
-fires that isn't a star and isn't already reported from CCOR-1, writes
+fires that isn't a star and isn't already reported, writes
 `data/live/alerts/<time>_<x>_<y>.json` and `.gif`, appends to
-`data/live/log.jsonl`, and keeps watching. Kreutz reports from other
-coronagraphs can't be matched by position, so the alert lists any from the
-previous day as a hint. `kreutz.score` later compares each alert with the
-reports that appeared and prints the lead or lag in minutes.
+`data/live/log.jsonl`, and keeps watching. It then measures the object in
+each new frame; once it has held for five frames, a second "confirmed" file
+is written with the report block ready for Sungrazer's form. With
+`--notify "python -m kreutz.notify"` and `NTFY_TOPIC` set in `.env`, both
+stages go to an ntfy topic, the first with the vetting GIF attached.
+Kreutz reports from other coronagraphs can't be matched by position; a
+lane track while one of them has a Kreutz comet in view counts as that
+comet. `kreutz.score` later compares each alert with the reports that
+appeared and prints the lead or lag in minutes. Submitting a report is
+always a person's job.
 
 ### A week at a time
 
@@ -136,10 +144,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm kreutz k
 ## Results so far
 
 On a benchmark week (July 17-24, 2025, eight confirmed CCOR-1 comets) the
-detector found six in time to have beaten the human report, by one minute to
-over four hours, found one late, and missed one that entered at the field edge
-just before a data gap. Over a two-month archive search it found every bright
-Kreutz comet that hunters reported, plus a planet, and no unreported comet.
+detector found all eight. Six it had before the human report was posted,
+by 17 minutes to 4.5 hours; two it found late, 85 and 116 minutes after
+the report. Over a two-month archive search it found every bright Kreutz
+comet that hunters reported, plus a planet, and no unreported comet.
 On the live feed it has flagged a real comet 30 minutes after it entered the
 field; a hunter had already reported it from another coronagraph.
 
