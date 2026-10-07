@@ -146,6 +146,15 @@ field; a hunter had already reported it from another coronagraph.
 Sungrazer's rules are at https://sungrazer.nrl.navy.mil/. Reports there must
 be made by the person who found and measured the object.
 
+## Tests
+
+`scripts/test.sh` runs lint and the unit tests in the container; CI runs
+the same on every push. Those cover the bookkeeping (coordinates, window
+and linking rules, report parsing and conversion) on synthetic inputs. The
+detector itself is tested by the July 2025 benchmark, `scripts/benchmark.sh`,
+run by hand whenever it changes, and that's where the numbers above come
+from.
+
 ## License
 
 MIT, see `LICENSE`.

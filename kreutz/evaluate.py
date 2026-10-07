@@ -253,7 +253,6 @@ def matches(track, pts):
 
 def evaluate(runs, threshold, link):
     by_time = load(runs)
-    day = min(by_time).date()
     reps = [json.loads(l) for p in (DATA / "reports").glob("*.jsonl") for l in open(p)]
     confirmed = {c["report"]["id"]: c["num"] for p in (DATA / "reports").glob("confirmed-*.json")
                  for c in json.load(open(p)) if c.get("report")}
@@ -284,7 +283,7 @@ def _persist(track, link):
     """persist.persistence for a fired track, sharing one Sequence per day
     so significance maps are computed once."""
     from .frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths
-    from .persist import AHEAD, persistence
+    from .persist import persistence
     fire = track[link - 1]
     day = fire["t"].date()
     if day not in _SEQ:
