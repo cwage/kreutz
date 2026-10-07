@@ -28,6 +28,7 @@ from .render import follow
 
 MIN_POINTS = 5
 CENTROID_R = 3
+FORM_URL = "https://sungrazer.nrl.navy.mil/report"
 
 
 def centroid(seq, i, x, y):
@@ -91,7 +92,13 @@ def main():
     seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
     pts = measure(seq, seq.times.index(t), x, y, vx, vy, args.back, args.ahead)
     lines, note = block(pts)
+    gif = args.what[0].replace(".json", ".gif") if len(args.what) == 1 else None
+    if gif and gif.startswith("/data/"):
+        gif = gif[1:]  # the container's /data is the project's data/; print it as seen from there
     print(f"# CCOR1, {pts[0][0]:%Y-%m-%d} UTC, {len(pts)} frames; {note}")
+    if gif:
+        print(f"# vetting animation: {gif} (real if it holds still while stars drift)")
+    print(f"# form: {FORM_URL}  telescope CCOR1, group Kreutz if it came in along the lane")
     print("\n".join(lines))
     if len(pts) < MIN_POINTS:
         print(f"# only {len(pts)} frames; Sungrazer wants at least {MIN_POINTS}", file=sys.stderr)

@@ -1,4 +1,4 @@
-"""Post a live alert to an ntfy topic.
+"""Page an ntfy topic about a live alert: what, where, and the command to run.
 
     docker compose run --rm kreutz kreutz.notify /data/live/alerts/<alert>.json
 
@@ -8,9 +8,9 @@ Meant as the live watcher's --notify command:
 
 The server and topic come from NTFY_SERVER (default https://ntfy.sh) and
 NTFY_TOPIC (docker-compose.yml passes both through from the host). The
-message has the time the object was seen, where and how fast, and any
-Kreutz reports from other instruments in the previous day; the alert's
-vetting GIF is attached when it exists.
+message is terse on purpose: nothing can be done from a phone, so it says
+what fired and gives the kreutz.report command to run at a computer,
+which measures the object and prints the block for Sungrazer's form.
 """
 
 import json
@@ -18,6 +18,15 @@ import os
 import sys
 import urllib.request
 from pathlib import Path
+
+
+def _send(server, topic, title, lines, priority, tags):
+    headers = {"Title": title, "Priority": priority, "Tags": tags,
+               # a header can't hold newlines; ntfy turns a literal \n into one
+               "Message": "\\n".join(lines)}
+    req = urllib.request.Request(f"{server}/{topic}", data=b"", headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        print(f"notified {server}/{topic}: HTTP {r.status}")
 
 
 def post(alert_path):
@@ -28,55 +37,22 @@ def post(alert_path):
         return
     p = Path(alert_path)
     d = json.load(open(p))
-    if isinstance(d, dict) and d.get("kind") == "confirmed":
-        return post_confirmed(server, topic, p, d)
     track = d["track"] if isinstance(d, dict) else d
     c = track[-1]
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
+    known = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
+    cmd = f"docker compose run --rm kreutz kreutz.report /data/live/alerts/{p.name}"
+    if isinstance(d, dict) and d.get("kind") == "confirmed":
+        lines = [f"Held {d['frames']} frames, {d['note']}; {known}.", "Measure and get the form block:", cmd]
+        title = "kreutz: CONFIRMED, report ready" if not others else "kreutz: confirmed, likely known"
+        _send(server, topic, title, lines, "urgent" if not others else "default", "comet,clipboard")
+        return
     speed = (c["vx"] ** 2 + c["vy"] ** 2) ** 0.5
-    lines = [f"Tracked {track[0]['time'][11:16]}-{c['time'][11:16]} UTC {c['time'][:10]} at "
-             f"({c['x']:.0f},{c['y']:.0f}), {speed:.1f} px/frame, peak {max(x['score'] for x in track):.1f} sigma. "
-             f"Moves, not a star, no CCOR-1 report matches."]
-    if others:
-        o = others[0]
-        more = f" (+{len(others) - 1} more)" if len(others) > 1 else ""
-        lines.append(f"Likely already known: {o['reporter']} reported a Kreutz comet from {o['telescope']} "
-                     f"at {o['posted_utc'][11:16]}Z{more}; other instruments can't be matched by position.")
-        title, priority, tags = "kreutz: comet candidate, likely known", "default", "comet"
-    else:
-        lines.append("No Kreutz report from CCOR-1, CCOR-2 or LASCO in the last 24 h: an unreported comet "
-                     "or an artifact. Check the GIF: real if it holds still while the stars drift.")
-        title, priority, tags = "kreutz: comet candidate, UNREPORTED", "high", "comet,eyes"
-    lines.append(f"File: {p.name}")
-    headers = {"Title": title, "Priority": priority, "Tags": tags,
-               # a header can't hold newlines; ntfy turns a literal \n into one
-               "Message": "\\n".join(lines)}
-    gif = p.with_suffix(".gif")
-    if gif.exists():
-        headers["Filename"] = gif.name
-        body = gif.read_bytes()
-    else:
-        body = "\n".join(lines).encode()
-        headers.pop("Message")
-    req = urllib.request.Request(f"{server}/{topic}", data=body, headers=headers, method="PUT" if gif.exists() else "POST")
-    with urllib.request.urlopen(req, timeout=60) as r:
-        print(f"notified {server}/{topic}: HTTP {r.status}")
-
-
-def post_confirmed(server, topic, p, d):
-    """The follow-up: the object held for MIN_POINTS+ frames; here's the block."""
-    others = d.get("other_instruments", [])
-    known = f"Likely known ({others[0]['reporter']}, {others[0]['telescope']}). " if others else "Unreported so far. "
-    lines = [f"Held for {d['frames']} frames, {d['note']}. {known}Report block (CCOR1, {d['track'][-1]['time'][:10]}):"]
-    lines += d["report"]
-    lines.append(f"File: {p.name}")
-    headers = {"Title": "kreutz: CONFIRMED in %d frames, report ready" % d["frames"]
-               if not others else "kreutz: confirmed, likely known",
-               "Priority": "default" if others else "urgent", "Tags": "comet,clipboard",
-               "Message": "\\n".join(lines)}
-    req = urllib.request.Request(f"{server}/{topic}", data=b"", headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=60) as r:
-        print(f"notified {server}/{topic}: HTTP {r.status}")
+    lines = [f"Mover at ({c['x']:.0f},{c['y']:.0f}) {speed:.1f} px/frame, seen since "
+             f"{track[0]['time'][11:16]} UTC; {known}.",
+             "Vet and measure:", cmd]
+    title = "kreutz: candidate, UNREPORTED" if not others else "kreutz: candidate, likely known"
+    _send(server, topic, title, lines, "high" if not others else "default", "comet")
 
 
 def main():
