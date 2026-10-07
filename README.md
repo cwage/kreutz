@@ -68,9 +68,24 @@ Modules, each with usage in its docstring:
 | `kreutz.shortlist` | archive run to a persistence-ranked list of unexplained tracks |
 | `kreutz.look` | strip of crops along a hypothesized track, for vetting by eye |
 | `kreutz.sheet` | contact sheets of those strips for a candidate list |
+| `kreutz.weekly` | collate a span's runs into shortlist, sheets and summary |
 | `kreutz.live` | watch the SWPC real-time feed and stop on the first unreported candidate |
 
-`scripts/` has the wrappers for longer jobs: `day.sh` (one day in three
+### A week at a time
+
+```
+scripts/weekly.sh            # the seven complete UTC days through yesterday
+scripts/weekly.sh 2026-10-04 # the week ending before that date
+```
+
+fetches the frames and reports, runs the full search day by day and the lane
+search over the span, and collates (`kreutz.weekly`) into
+`data/weekly/<start>_<end>/`: a shortlist of every fired track, contact sheets
+of the unexplained candidates and the brightest reported comets, and a
+`summary.txt`. Add `--gpu` to use the GPU for the full search. Days already
+searched are skipped, so it can be rerun.
+
+`scripts/` also has the wrappers for longer jobs: `day.sh` (one day in three
 parallel chunks), `archive.sh` and `archive-gpu.sh` (a span of days),
 `lane.sh`, `benchmark.sh` (the July 2025 week below) and `stop.sh`.
 

@@ -22,12 +22,11 @@ from .look import strip
 BACK, AHEAD = 7, 5
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("candidates")
-    ap.add_argument("--per", type=int, default=6)
-    args = ap.parse_args()
-    cands = json.load(open(args.candidates))
+def make_sheets(cands, out, per=6):
+    """Contact sheets for candidate records (time, x, y, vx, vy, and
+    optionally persistence/known/source), written to out/sheet-NN.png in
+    the order given. Returns the paths."""
+    cands = [dict(c) for c in cands]
     for n, c in enumerate(cands):
         c["n"] = n
         c["t"] = datetime.fromisoformat(c["time"][:19])
@@ -45,21 +44,33 @@ def main():
         except (ValueError, IndexError) as e:
             print(f"#{c['n']} {c['time'][:16]}: skipped ({e})")
             continue
+        tag = (f"pers {c['persistence']:+.1f}" if "persistence" in c and c["persistence"] is not None
+               else c.get("known", ""))
         label = Image.new("L", (img.shape[1], 14), 0)
         ImageDraw.Draw(label).text(
             (2, 1), f"#{c['n']}  {c['time'][:16]}  ({c['x']:.0f},{c['y']:.0f})  "
-                    f"v=({c['vx']:+.1f},{c['vy']:+.1f})  pers {c['persistence']:+.1f}", fill=255)
+                    f"v=({c['vx']:+.1f},{c['vy']:+.1f})  {c.get('source', '')}  {tag}", fill=255)
         rows.append((c["n"], np.vstack([np.asarray(label), img])))
     rows.sort()
-    out = DATA / "look"
-    out.mkdir(exist_ok=True)
-    for s in range(0, len(rows), args.per):
-        group = [r for _, r in rows[s:s + args.per]]
+    out.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for s in range(0, len(rows), per):
+        group = [r for _, r in rows[s:s + per]]
         w = max(g.shape[1] for g in group)
         group = [np.pad(g, ((0, 6), (0, w - g.shape[1])), constant_values=255) for g in group]
-        path = out / f"sheet-{s // args.per:02d}.png"
+        path = out / f"sheet-{s // per:02d}.png"
         Image.fromarray(np.vstack(group)).save(path)
-        print(path, f"#{rows[s][0]}-#{rows[min(s + args.per, len(rows)) - 1][0]}")
+        print(path, f"#{rows[s][0]}-#{rows[min(s + per, len(rows)) - 1][0]}")
+        paths.append(path)
+    return paths
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("candidates")
+    ap.add_argument("--per", type=int, default=6)
+    args = ap.parse_args()
+    make_sheets(json.load(open(args.candidates)), DATA / "look", args.per)
 
 
 if __name__ == "__main__":

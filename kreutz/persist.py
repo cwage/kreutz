@@ -15,7 +15,6 @@ is how far the real path's mean peak stands above the controls', in units
 of their spread.
 """
 
-from datetime import datetime
 
 import numpy as np
 

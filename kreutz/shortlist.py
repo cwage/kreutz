@@ -17,13 +17,12 @@ persistent first; look.py renders a vetting strip for any of them.
 
 import argparse
 import json
-from datetime import timedelta
+
 
 import numpy as np
 
 from . import DATA
 from .evaluate import FRAME, load, report_points, tracks
-from .persist import persistence
 
 THRESHOLD = 6.0
 LINK = 3
@@ -69,6 +68,43 @@ def known_as(track, reps):
     return None
 
 
+def shortlist(runs, threshold=THRESHOLD, link=LINK, start=None, end=None):
+    """Fired tracks in the runs, each as a record with the firing window's
+    position and velocity, marked "known" (reporter and report id) or
+    scored for persistence. Tracks firing outside [start, end) are left
+    out when those are given."""
+    from .evaluate import _persist  # shares Sequences per day
+
+    by_time = load(runs)
+    if start or end:
+        by_time = {t: v for t, v in by_time.items()
+                   if (start is None or t >= start) and (end is None or t < end)}
+    if not by_time:
+        return []
+    days = sorted({t.date() for t in by_time})
+    reps = report_tracks(days)
+    out = []
+    for tr in tracks(by_time, threshold, link):
+        fire = tr[link - 1]
+        k = known_as(tr, reps)
+        rec = {"time": fire["time"], "x": fire["x"], "y": fire["y"],
+               "vx": fire["vx"], "vy": fire["vy"], "windows": len(tr),
+               "scores": [c["score"] for c in tr]}
+        if k:
+            rec["known"] = f"{k['reporter']} {k['id']}"
+        else:
+            rec["persistence"] = _persist(tr, link)
+        out.append(rec)
+    return out
+
+
+def candidates(out):
+    """The unexplained, persistent records, most persistent first."""
+    cands = [r for r in out if "known" not in r and np.isfinite(r["persistence"])
+             and r["persistence"] >= MAYBE]
+    return sorted(cands, key=lambda r: -r["persistence"])
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("runs", nargs="+")
@@ -76,33 +112,17 @@ def main():
     ap.add_argument("--link", type=int, default=LINK)
     args = ap.parse_args()
 
-    from .evaluate import _persist  # shares Sequences per day
-
-    by_time = load(args.runs)
-    days = sorted({t.date() for t in by_time})
-    reps = report_tracks(days)
-    trs = tracks(by_time, args.threshold, args.link)
-    out = []
-    for tr in trs:
-        fire = tr[args.link - 1]
-        k = known_as(tr, reps)
-        rec = {"time": fire["time"], "x": fire["x"], "y": fire["y"],
-               "vx": fire["vx"], "vy": fire["vy"], "windows": len(tr),
-               "scores": [c["score"] for c in tr]}
-        if k:
-            rec["known"] = f"{k['reporter']} {k['id']}"
-            out.append(rec)
-            continue
-        rec["persistence"] = _persist(tr, args.link)
-        out.append(rec)
-    cands = [r for r in out if "known" not in r and np.isfinite(r["persistence"])
-             and r["persistence"] >= MAYBE]
-    cands.sort(key=lambda r: -r["persistence"])
+    out = shortlist(args.runs, args.threshold, args.link)
+    if not out:
+        print("no tracks fired")
+        return
+    cands = candidates(out)
+    days = sorted({r["time"][:10] for r in out})
     dest = DATA / "shortlist" / f"{days[0]}_{days[-1]}.json"
     dest.parent.mkdir(exist_ok=True)
     dest.write_text(json.dumps({"candidates": cands, "all": out}, indent=1, default=str))
     known = [r for r in out if "known" in r]
-    print(f"{len(trs)} tracks fired; {len(known)} on reported comets; "
+    print(f"{len(out)} tracks fired; {len(known)} on reported comets; "
           f"{sum(r['persistence'] >= STRONG for r in cands)} strong and "
           f"{sum(r['persistence'] < STRONG for r in cands)} maybe candidates -> {dest}")
     for r in cands:
