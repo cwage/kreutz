@@ -10,7 +10,9 @@ somebody already reported from CCOR-1 is logged to data/live/known.jsonl
 and the watch goes on; anything else (and not already vetted into
 known.jsonl) is written to data/live/alerts/<time>.json with a crop
 animation beside it, remembered so it isn't raised again, and the watch
-goes on. Every outcome (alert, star, already reported) is appended to
+goes on. The object is then measured in each new frame (report.py); once
+it has been seen in five frames a second, "confirmed" notification goes
+out with the report block ready to paste into Sungrazer's form. Every outcome (alert, star, already reported) is appended to
 data/live/log.jsonl with the wall-clock time it was decided, which is
 what score.py turns into a table of leads and lags against the reports.
 
@@ -43,6 +45,7 @@ from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kr
 from .lane import build_field, in_lane
 from .reports import _fetch, parse
 from .frames import BG_FRAMES, BG_SKIP, L1B, STAR_FRAMES, Sequence, frame_paths
+from .report import MIN_POINTS, block, measure
 from .search import MAX_MISSING, consistent, search
 from .vet import follow
 
@@ -131,6 +134,54 @@ def other_instruments(track, reps):
                         datetime.fromisoformat(track[-1]["time"]))
 
 
+CONFIRM_LOST = 3  # consecutive frames without the object before a follow-up is dropped
+
+
+def follow_up(seq, last, pending, notify):
+    """Keep measuring alerted objects in each new frame. Once one has been
+    seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
+    gets the report block and the notify command runs on it. An object
+    missing for CONFIRM_LOST frames in a row is dropped."""
+    keep = []
+    for f in pending:
+        dt = (seq.times[last] - f["t"]) / FRAME
+        if dt < 1:
+            keep.append(f)
+            continue
+        pts = measure(seq, last, f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt, f["vx"], f["vy"],
+                      back=0, ahead=0, lost=0)
+        if not pts:
+            f["misses"] += 1
+            if f["misses"] < CONFIRM_LOST:
+                keep.append(f)
+            else:
+                log("faded", f["track"], datetime.now(timezone.utc).replace(tzinfo=None), alert=f["alert"])
+            continue
+        f["misses"] = 0
+        f["points"].append(pts[-1])
+        t, x, y, _ = pts[-1]
+        f["vx"], f["vy"] = (x - f["x"]) / dt, (y - f["y"]) / dt
+        f["t"], f["x"], f["y"] = t, x, y
+        if len(f["points"]) >= MIN_POINTS:
+            lines, note = block(f["points"])
+            path = f["alert"].replace(".json", ".confirmed.json")
+            json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
+                       "frames": len(f["points"]), "other_instruments": f["others"],
+                       "decided_utc": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")},
+                      open(path, "w"), indent=1)
+            log("confirmed", f["track"], datetime.now(timezone.utc).replace(tzinfo=None),
+                alert=f["alert"], frames=len(f["points"]), note=note)
+            print(f"CONFIRMED {path} ({len(f['points'])} frames, {note})", flush=True)
+            if notify:
+                try:
+                    subprocess.Popen(shlex.split(notify) + [path])
+                except OSError as e:
+                    print(f"notify failed: {e}", file=sys.stderr)
+            continue  # one follow-up per alert
+        keep.append(f)
+    return keep
+
+
 def log(kind, track, decided, **extra):
     rec = {"kind": kind, "decided_utc": decided.isoformat(timespec="seconds"),
            "first": track[0]["time"], "last": track[-1]["time"],
@@ -174,6 +225,7 @@ def main():
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
     done = set()
     chains = []  # open tracks, as in evaluate.tracks
+    pending = []  # alerted objects still being followed for a confirmed notification
     field = None  # the Kreutz lane, built once a frame shape is known
     while True:
         try:
@@ -225,6 +277,7 @@ def main():
             done.add(t)
             print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {len(chains)} open tracks",
                   file=sys.stderr)
+            pending = follow_up(seq, last, pending, args.notify)
             for ch in chains:
                 if len(ch) == args.link and not is_known(ch[-1], t) \
                         and moves([dict(c, t=datetime.fromisoformat(c["time"])) for c in ch]):
@@ -263,6 +316,12 @@ def main():
                     remember(c, f"alert: {stem.name}")
                     log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
                         reports_checked=reps is not None, others=others)
+                    # follow it for a confirmed notification; start from what's
+                    # measurable already
+                    pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
+                    pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
+                                    "points": pts, "t": t, "x": c["x"], "y": c["y"],
+                                    "vx": c["vx"], "vy": c["vy"], "misses": 0})
                     hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
                         if others else ""
                     print(f"ALERT {stem}{hint}", flush=True)

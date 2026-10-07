@@ -28,6 +28,8 @@ def post(alert_path):
         return
     p = Path(alert_path)
     d = json.load(open(p))
+    if isinstance(d, dict) and d.get("kind") == "confirmed":
+        return post_confirmed(server, topic, p, d)
     track = d["track"] if isinstance(d, dict) else d
     c = track[-1]
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
@@ -57,6 +59,22 @@ def post(alert_path):
         body = "\n".join(lines).encode()
         headers.pop("Message")
     req = urllib.request.Request(f"{server}/{topic}", data=body, headers=headers, method="PUT" if gif.exists() else "POST")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        print(f"notified {server}/{topic}: HTTP {r.status}")
+
+
+def post_confirmed(server, topic, p, d):
+    """The follow-up: the object held for MIN_POINTS+ frames; here's the block."""
+    others = d.get("other_instruments", [])
+    known = f"Likely known ({others[0]['reporter']}, {others[0]['telescope']}). " if others else "Unreported so far. "
+    lines = [f"Held for {d['frames']} frames, {d['note']}. {known}Report block (CCOR1, {d['track'][-1]['time'][:10]}):"]
+    lines += d["report"]
+    lines.append(f"File: {p.name}")
+    headers = {"Title": "kreutz: CONFIRMED in %d frames, report ready" % d["frames"]
+               if not others else "kreutz: confirmed, likely known",
+               "Priority": "default" if others else "urgent", "Tags": "comet,clipboard",
+               "Message": "\\n".join(lines)}
+    req = urllib.request.Request(f"{server}/{topic}", data=b"", headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=60) as r:
         print(f"notified {server}/{topic}: HTTP {r.status}")
 
