@@ -23,7 +23,7 @@ import numpy as np
 
 from . import DATA
 from .evaluate import FRAME, load, other_kreutz, report_points, tracks
-from .lane import build_field, in_lane
+from .lane import _flow_at, build_field, in_lane
 
 THRESHOLD = 6.0
 LINK = 3
@@ -40,7 +40,13 @@ MAYBE = 1.5
 KNOWN_PX = 10
 KNOWN_GROW = 1.5
 KNOWN_HOURS = 12
-KNOWN_BACK_HOURS = 6
+KNOWN_BACK_HOURS = 12
+# Kreutz comets speed up toward the Sun, so a straight line backward from
+# a report overshoots (a comet at 12 px/frame when measured was doing 9
+# seven hours earlier). For Kreutz reports the backward extrapolation
+# follows the lane flow field (lane.py) instead, with a slower-growing
+# tolerance.
+KNOWN_FLOW_GROW = 0.75
 
 
 def all_reports():
@@ -71,7 +77,7 @@ def known_as(track, reps, others=None, field=None):
     """(report, how) for the report this track is, or None: by position
     along a CCOR-1 report's extrapolated path, or by time+lane for a
     Kreutz report from another instrument (evaluate.other_kreutz)."""
-    r = _known_by_position(track, reps)
+    r = _known_by_position(track, reps, field)
     if r:
         return r, "position"
     if others and field is not None:
@@ -85,20 +91,43 @@ def known_as(track, reps, others=None, field=None):
     return None
 
 
-def _known_by_position(track, reps):
+def _flow_back(field, x, y, frames):
+    """Positions (report coords) 1..frames frames before (x, y), following
+    the lane flow backward."""
+    out = []
+    r, c = FRAME_ROWS - 1 - y, x
+    for _ in range(frames):
+        fr, fc = _flow_at(field, np.array([r]), np.array([c]))
+        r, c = r - float(fr[0]), c - float(fc[0])
+        out.append((c, FRAME_ROWS - 1 - r))
+    return out
+
+
+def _known_by_position(track, reps, field=None):
     for r, pts in reps:
         (t0, x0, y0), (t1, x1, y1) = pts[0], pts[-1]
         n = (t1 - t0) / FRAME
         if n <= 0:
             continue
         vx, vy = (x1 - x0) / n, (y1 - y0) / n
+        back = None  # lane-flow path before the report, computed on demand
         for c in track:
             k = (c["t"] - t1) / FRAME
             if not -n - KNOWN_BACK_HOURS * 4 <= k <= KNOWN_HOURS * 4:
                 continue
             gap = max(0.0, k, -n - k)  # frames outside the reported span
-            px, py = x1 + vx * k, y1 + vy * k
-            if np.hypot(c["x"] - px, c["y"] - py) <= KNOWN_PX + KNOWN_GROW * gap:
+            if k < -n and field is not None and r.get("group") == "Kreutz":
+                if back is None:
+                    back = _flow_back(field, x0, y0, KNOWN_BACK_HOURS * 4)
+                j = int(round(-n - k)) - 1
+                if j < 0 or j >= len(back):
+                    continue
+                px, py = back[j]
+                tol = KNOWN_PX + KNOWN_FLOW_GROW * gap
+            else:
+                px, py = x1 + vx * k, y1 + vy * k
+                tol = KNOWN_PX + KNOWN_GROW * gap
+            if np.hypot(c["x"] - px, c["y"] - py) <= tol:
                 return r
     return None
 

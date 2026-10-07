@@ -19,10 +19,12 @@ publication delay plus compute.
 
 import argparse
 import json
+import warnings
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 import numpy as np
+from astropy.io import fits
 
 from . import DATA
 
@@ -139,8 +141,46 @@ def tracks(by_time, threshold, link):
     return [ch for ch in done if len(ch) >= link and moves(ch[:link])]
 
 
+# One reporter measures on SWPC's public CCOR-1 image rather than the L1b
+# frame: that image is the frame derotated to solar north up (the header's
+# PC matrix), scaled by SWPC_SCALE, with the Sun at SWPC_SUN. Fitted on
+# all nine of his Aug-Sep 2026 Kreutz reports against our tracks of the
+# same comets: 93 of 123 point pairs within 20 px (the rest are pairings
+# with the wrong track), median residual 3 px. Converting needs the frame
+# at the report time for its rotation; without it the report is skipped.
+SWPC_CANVAS_REPORTERS = {"Bill Collins"}
+SWPC_SCALE = 0.4726
+SWPC_SUN = (604.9, 603.4)
+_HDR = {}
+
+
+def _header_at(t):
+    from .frames import L1B
+    key = f"{t:%Y%m%dT%H%M}"
+    if key not in _HDR:
+        fs = sorted((L1B / f"{t:%Y/%m/%d}").glob(f"CCOR1_1B_{key}*_NC.fits"))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # the files carry a BLANK on float data
+            _HDR[key] = fits.getheader(fs[0], 1) if fs else None
+    return _HDR[key]
+
+
+def swpc_canvas_to_report(t, x, y):
+    """A point measured on SWPC's derotated image -> report coordinates in
+    the L1b frame at time t, or None without that frame."""
+    h = _header_at(t)
+    if h is None:
+        return None
+    west, north = (x - SWPC_SUN[0]) / SWPC_SCALE, -(y - SWPC_SUN[1]) / SWPC_SCALE
+    pc = np.array([[h["PC1_1"], h["PC1_2"]], [h["PC2_1"], h["PC2_2"]]])
+    dcol, drow = np.linalg.solve(pc, [west, north])
+    col, row = h["CRPIX1"] - 1 + dcol, h["CRPIX2"] - 1 + drow
+    return float(col), float(h["NAXIS2"] - 1 - row)
+
+
 def report_points(reports, day):
-    """(report, [(time, x, y)]) for reports with points on or around `day`."""
+    """(report, [(time, x, y)]) for reports with points on or around `day`,
+    in L1b report coordinates (see swpc_canvas_to_report)."""
     out = []
     for r in reports:
         if not r["points"] or r["telescope"] != "CCOR1":
@@ -151,8 +191,13 @@ def report_points(reports, day):
             t = posted.replace(hour=int(hhmm[:2]), minute=int(hhmm[2:]), second=0)
             if t > posted:
                 t -= timedelta(days=1)
+            if r.get("reporter") in SWPC_CANVAS_REPORTERS:
+                xy = swpc_canvas_to_report(t.replace(second=25), x, y)
+                if xy is None:
+                    continue
+                x, y = xy
             pts.append((t, x, y))
-        if any(abs((t.date() - day).days) <= 1 for t, _, _ in pts):
+        if pts and any(abs((t.date() - day).days) <= 1 for t, _, _ in pts):
             out.append((r, pts, posted))
     return out
 
