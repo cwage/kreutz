@@ -69,20 +69,28 @@ Modules, each with usage in its docstring:
 | `kreutz.look` | strip of crops along a hypothesized track, for vetting by eye |
 | `kreutz.sheet` | contact sheets of those strips for a candidate list |
 | `kreutz.weekly` | collate a span's runs into shortlist, sheets and summary |
-| `kreutz.render` | follow one detection through the frames and make crop and field animations and a stacked still |
+| `kreutz.render` | follow one detection through the frames; write the aligned cutouts as FITS cubes, the track, and a quick-look preview |
+| `kreutz.style` | pictures from a render's FITS cubes in a named preset (reference styles, copy and change) |
 | `kreutz.live` | watch the SWPC real-time feed and stop on the first unreported candidate |
 
 ### Pictures
 
 ```
-docker compose run --rm kreutz kreutz.render --vet /data/weekly/2026-09-27_2026-10-04/to-vet.json 12
-docker compose run --rm kreutz kreutz.render 2026-09-30T19:45 1729 1131 -10 -2 --name sep30
+docker compose run --rm kreutz kreutz.render 2026-09-16T01:45 1953 1126 -9 -1.5 --name sep16
+docker compose run --rm kreutz kreutz.style /data/render/sep16 --preset tintype
 ```
 
-follows the object forward and back through the frames until it is lost and
-writes `data/render/<name>/`: `crop.gif` (a crop moving with the comet, stars
-sliding past), `field.gif` (the region it crosses, comet ringed) and
-`still.png` (frames stacked along its motion).
+`kreutz.render` follows the object forward and back through the frames until
+it is lost, across data gaps, and writes `data/render/<name>/`: `track.json`,
+`cutouts.fits` (raw and background-subtracted crops aligned on the object, the
+field region it crosses, a shift-and-stack along its motion, and the track as
+a table) and a plain `preview.gif`. The FITS data is unfiltered and
+unstretched; it is the product.
+
+`kreutz.style` turns those cubes into a crop animation (object held still,
+stars sliding past), a field animation, PNG frames and a still, in one of a
+few reference presets. Styling is a matter of taste, so the presets are
+starting points to copy, not the project's opinion.
 
 ### A week at a time
 
