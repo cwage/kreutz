@@ -23,6 +23,8 @@ time+lane"; the alert for anything else lists such reports as a hint.
 
 --notify CMD runs CMD with the alert's .json path appended, e.g.
 --notify "python -m kreutz.notify" to post to an ntfy topic (notify.py).
+--render makes a confirmed object's cutouts and pictures (render.py,
+style.py) in the background under data/render/<alert name>/.
 """
 
 import argparse
@@ -34,6 +36,7 @@ import sys
 import time
 import urllib.request
 from dataclasses import asdict
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -137,7 +140,7 @@ def other_instruments(track, reps):
 CONFIRM_LOST = 3  # consecutive frames without the object before a follow-up is dropped
 
 
-def follow_up(seq, last, pending, notify):
+def follow_up(seq, last, pending, notify, render=False):
     """Keep measuring alerted objects in each new frame. Once one has been
     seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
     gets the report block and the notify command runs on it. An object
@@ -177,6 +180,16 @@ def follow_up(seq, last, pending, notify):
                     subprocess.Popen(shlex.split(notify) + [path])
                 except OSError as e:
                     print(f"notify failed: {e}", file=sys.stderr)
+            if render:
+                # the full-quality cutouts and pictures, in the background;
+                # covers the frames so far, re-run kreutz.render later for
+                # the whole passage
+                c = f["track"][-1]
+                name = Path(f["alert"]).stem
+                cmd = (f"python -m kreutz.render {c['time'][:16]} {c['x']} {c['y']} {c['vx']} {c['vy']} "
+                       f"--back 24 --ahead 24 --name {name} && python -m kreutz.style /data/render/{name} --all")
+                subprocess.Popen(["sh", "-c", cmd], cwd="/srv",
+                                 stdout=open(LIVE / "alerts" / f"{name}.render.log", "w"), stderr=subprocess.STDOUT)
             continue  # one follow-up per alert
         keep.append(f)
     return keep
@@ -219,6 +232,8 @@ def main():
     ap.add_argument("--link", type=int, default=3)
     ap.add_argument("--n", type=int, default=4)
     ap.add_argument("--notify", help="command run with the alert .json path as argument")
+    ap.add_argument("--render", action="store_true",
+                    help="on confirmation, run kreutz.render and kreutz.style for it in the background")
     args = ap.parse_args()
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
@@ -277,7 +292,7 @@ def main():
             done.add(t)
             print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {len(chains)} open tracks",
                   file=sys.stderr)
-            pending = follow_up(seq, last, pending, args.notify)
+            pending = follow_up(seq, last, pending, args.notify, args.render)
             for ch in chains:
                 if len(ch) == args.link and not is_known(ch[-1], t) \
                         and moves([dict(c, t=datetime.fromisoformat(c["time"])) for c in ch]):

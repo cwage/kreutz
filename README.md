@@ -98,7 +98,7 @@ starting points to copy, not the project's opinion.
 ### Live
 
 ```
-docker compose run --rm -d kreutz kreutz.live --n 8 --threshold 6.5 [--notify /srv/kreutz/../notify.sh]
+docker compose run --rm -d kreutz kreutz.live --n 8 --threshold 6.5 --notify "python -m kreutz.notify" --render
 ```
 
 polls NOAA's real-time feed, searches each new window, and when a track
@@ -108,7 +108,9 @@ fires that isn't a star and isn't already reported, writes
 each new frame; once it has held for five frames, a second "confirmed" file
 is written with the report block ready for Sungrazer's form. With
 `--notify "python -m kreutz.notify"` and `NTFY_TOPIC` set in `.env`, both
-stages go to an ntfy topic, the first with the vetting GIF attached.
+stages page an ntfy topic with the `kreutz.report` command to run. With
+`--render`, a confirmed object's cutouts and pictures are made in the
+background under `data/render/`.
 Kreutz reports from other coronagraphs can't be matched by position; a
 lane track while one of them has a Kreutz comet in view counts as that
 comet. `kreutz.score` later compares each alert with the reports that
