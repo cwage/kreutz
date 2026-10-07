@@ -32,10 +32,15 @@ LINK = 3
 # few noise tracks, worth a look by eye.
 STRONG = 3.0
 MAYBE = 1.5
-# Report extrapolation: allowed miss = KNOWN_PX + KNOWN_GROW * frames away.
+# Report extrapolation: allowed miss = KNOWN_PX + KNOWN_GROW * frames
+# outside the reported span, up to KNOWN_HOURS after the report's last
+# point and KNOWN_BACK_HOURS before its first (a comet is in the field for
+# hours before anyone measures it; Ruan's 2026-10-02 comet was tracked
+# from 16:45, his first point was 18:30).
 KNOWN_PX = 10
 KNOWN_GROW = 1.5
 KNOWN_HOURS = 12
+KNOWN_BACK_HOURS = 6
 
 
 def all_reports():
@@ -89,7 +94,7 @@ def _known_by_position(track, reps):
         vx, vy = (x1 - x0) / n, (y1 - y0) / n
         for c in track:
             k = (c["t"] - t1) / FRAME
-            if not -n - 2 <= k <= KNOWN_HOURS * 4:
+            if not -n - KNOWN_BACK_HOURS * 4 <= k <= KNOWN_HOURS * 4:
                 continue
             gap = max(0.0, k, -n - k)  # frames outside the reported span
             px, py = x1 + vx * k, y1 + vy * k
