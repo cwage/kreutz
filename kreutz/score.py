@@ -23,15 +23,20 @@ from .live import LIVE, other_instruments
 def alerts():
     seen = set()
     out = []
+    confirmed = {}  # alert file name -> when the follow-up confirmed it
     p = LIVE / "log.jsonl"
     if p.exists():
         for ln in open(p):
             r = json.loads(ln)
+            if r["kind"] == "confirmed":
+                confirmed[r.get("alert", "").rsplit("/", 1)[-1]] = r["decided_utc"]
             if r["kind"] == "alert":
                 out.append(r)
                 seen.add(r.get("alert", "").rsplit("/", 1)[-1])
+    for r in out:
+        r["confirmed_utc"] = confirmed.get(r.get("alert", "").rsplit("/", 1)[-1])
     for f in sorted((LIVE / "alerts").glob("*.json")):
-        if f.name in seen:
+        if f.name in seen or f.name.endswith(".confirmed.json"):
             continue
         d = json.load(open(f))
         track = d["track"] if isinstance(d, dict) else d
@@ -74,15 +79,25 @@ def main():
     def lead(posted):
         return f"{(posted - decided).total_seconds() / 60:+.0f} min"
 
-    print(f"{'alert (last frame)':22} {'decided':17} {'CCOR-1 report':40} {'lead':9} other instrument")
+    def leads(posted, a):
+        """lead at the candidate stage, and at the confirmed stage if there was one"""
+        s = lead(posted)
+        if a.get("confirmed_utc"):
+            s += f" / {(posted - datetime.fromisoformat(a['confirmed_utc'])).total_seconds() / 60:+.0f} confirmed"
+        return s
+
+    print("lead: minutes between our alert and the report's posting (+ means we were first), "
+          "candidate stage / confirmed stage")
+    print(f"{'alert (last frame)':22} {'decided':17} {'confirmed':11} {'CCOR-1 report':40} {'lead':24} other instrument")
     for a, ccor1, other, decided in rows:
-        c1 = f"{ccor1[0][:38]:40} {lead(ccor1[1]):9}" if ccor1 else f"{'-':40} {'':9}"
+        conf = a["confirmed_utc"][5:16] if a.get("confirmed_utc") else "-"
+        c1 = f"{ccor1[0][:38]:40} {leads(ccor1[1], a):24}" if ccor1 else f"{'-':40} {'':24}"
         if other:
             op = datetime.strptime(other["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
-            ot = f"{other['reporter']} {other['telescope']} {lead(op)}"
+            ot = f"{other['reporter']} {other['telescope']} {leads(op, a)}"
         else:
             ot = "-"
-        print(f"{a['last'][:16]:22} {a['decided_utc'][5:16]:17} {c1} {ot}")
+        print(f"{a['last'][:16]:22} {a['decided_utc'][5:16]:17} {conf:11} {c1} {ot}")
 
 
 if __name__ == "__main__":
