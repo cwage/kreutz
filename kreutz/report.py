@@ -96,7 +96,8 @@ def main():
     seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
     pts = measure(seq, seq.times.index(t), x, y, vx, vy, args.back, args.ahead)
     lines, note = block(pts)
-    gif = args.what[0].replace(".json", ".gif") if len(args.what) == 1 else None
+    # the vetting GIF belongs to the alert, also when given its .confirmed.json
+    gif = args.what[0].replace(".confirmed.json", ".json").replace(".json", ".gif") if len(args.what) == 1 else None
     if gif and gif.startswith("/data/"):
         gif = gif[1:]  # the container's /data is the project's data/; print it as seen from there
     print(f"# CCOR1, {pts[0][0]:%Y-%m-%d} UTC, {len(pts)} frames; {note}")
