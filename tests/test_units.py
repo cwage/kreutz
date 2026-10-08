@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
-from kreutz import evaluate, reports, search
+from kreutz import evaluate, live, reports, search
 from kreutz.frames import Sequence
 
 F = timedelta(minutes=15)
@@ -89,3 +89,20 @@ def test_swpc_canvas_sun_maps_to_crpix(monkeypatch):
     # one canvas pixel east of the Sun is 1/SWPC_SCALE frame pixels away
     x2, y2 = evaluate.swpc_canvas_to_report(t, evaluate.SWPC_SUN[0] + 10, evaluate.SWPC_SUN[1])
     assert np.hypot(x2 - x, y2 - y) == pytest.approx(10 / evaluate.SWPC_SCALE, rel=1e-3)
+
+
+def test_prune_keeps_days_not_wholly_past_the_cutoff(tmp_path):
+    l1b, sig = tmp_path / "l1b", tmp_path / "sig" / "somekey"
+    for root in (l1b, sig):
+        for day in ("2026/09/30", "2026/10/04", "2026/10/05", "2026/10/06", "2026/10/07"):
+            (root / day).mkdir(parents=True)
+            (root / day / "frame.fits").touch()
+        (root / "notes").mkdir()  # not a date; left alone
+    # 2 days before 2026-10-07 12:00 is 10-05 12:00: 10-05 is only half past
+    gone = live.prune(2, datetime(2026, 10, 7, 12, 0), roots=[l1b, sig])
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in gone) == [
+        "l1b/2026/09/30", "l1b/2026/10/04", "sig/somekey/2026/09/30", "sig/somekey/2026/10/04"]
+    for root in (l1b, sig):
+        assert sorted(p.name for p in (root / "2026" / "10").iterdir()) == ["05", "06", "07"]
+        assert not (root / "2026" / "09").exists()  # emptied month removed
+        assert (root / "notes").exists()
