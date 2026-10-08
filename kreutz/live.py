@@ -25,12 +25,17 @@ time+lane"; the alert for anything else lists such reports as a hint.
 --notify "python -m kreutz.notify" to post to an ntfy topic (notify.py).
 --render makes a confirmed object's cutouts and pictures (render.py,
 style.py) in the background under data/render/<alert name>/.
+--keep-days N deletes frames and significance maps more than N days old
+(prune), for an always-on watcher on a small disk. The frames directory is
+the archive fetcher's too, so don't use it where archive runs keep frames.
+Alerts, logs and renders are kept; a pruned day comes back with kreutz.fetch.
 """
 
 import argparse
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -47,7 +52,7 @@ from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kr
                        report_points)
 from .lane import build_field, in_lane
 from .reports import _fetch, parse
-from .frames import BG_FRAMES, BG_SKIP, L1B, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, measure
 from .search import MAX_MISSING, consistent, search
 from .vet import follow
@@ -62,6 +67,7 @@ POLL_S = 120
 # and leans on persist.py instead.
 LIVE_SPEED_MIN = 2.0
 LIVE = DATA / "live"
+PRUNE_EVERY = timedelta(hours=1)
 
 
 def _get(url):
@@ -91,6 +97,35 @@ def sync(since):
         tmp.rename(dest)
         new += 1
     return new
+
+
+def prune(keep_days, now, roots=None):
+    """Delete the day directories (YYYY/MM/DD) of frames and significance
+    maps, under every settings key, whose whole day ended more than
+    `keep_days` before `now`, and any month or year directories left empty.
+    The date comes from the path, not file times (an archive-fetched frame
+    is new on disk however old it is). Returns the directories removed."""
+    if roots is None:
+        roots = [L1B] + (sorted(p for p in SIG_CACHE.iterdir() if p.is_dir())
+                         if SIG_CACHE.exists() else [])
+    cutoff = now - timedelta(days=keep_days)
+    gone = []
+    for root in roots:
+        for day in sorted(root.glob("[0-9]*/[0-9]*/[0-9]*")):
+            try:
+                d = datetime.strptime("/".join(day.parts[-3:]), "%Y/%m/%d")
+            except ValueError:
+                continue
+            if not day.is_dir() or d + timedelta(days=1) > cutoff:
+                continue
+            shutil.rmtree(day)
+            gone.append(day)
+            for parent in (day.parent, day.parent.parent):
+                try:
+                    parent.rmdir()
+                except OSError:  # not empty
+                    break
+    return gone
 
 
 def known():
@@ -234,7 +269,14 @@ def main():
     ap.add_argument("--notify", help="command run with the alert .json path as argument")
     ap.add_argument("--render", action="store_true",
                     help="on confirmation, run kreutz.render and kreutz.style for it in the background")
+    ap.add_argument("--keep-days", type=int, metavar="N",
+                    help="delete frames and significance maps more than N days old (N >= 1); "
+                         "the frames directory is kreutz.fetch's too, so this deletes archive frames")
     args = ap.parse_args()
+    # The watcher works on the last ~11 h of frames and sync() re-downloads
+    # anything missing from that span, so a day is the floor.
+    if args.keep_days is not None and args.keep_days < 1:
+        ap.error("--keep-days must be at least 1")
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
@@ -242,6 +284,7 @@ def main():
     chains = []  # open tracks, as in evaluate.tracks
     pending = []  # alerted objects still being followed for a confirmed notification
     field = None  # the Kreutz lane, built once a frame shape is known
+    pruned = None  # when prune last ran
     while True:
         try:
             new = sync(datetime.now(timezone.utc).replace(tzinfo=None) - history - timedelta(hours=1))
@@ -348,6 +391,15 @@ def main():
                             subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])
                         except OSError as e:
                             print(f"notify failed: {e}", file=sys.stderr)
+        if args.keep_days and (pruned is None or now - pruned >= PRUNE_EVERY):
+            pruned = now
+            try:
+                gone = prune(args.keep_days, now)
+                if gone:
+                    print(f"{now:%H:%M} pruned {len(gone)} day directories older than "
+                          f"{args.keep_days} d", file=sys.stderr)
+            except Exception as e:  # disk trouble must not take the watcher down
+                print(f"{now:%H:%M} prune error: {e}", file=sys.stderr)
         if new == 0:
             time.sleep(POLL_S)
 

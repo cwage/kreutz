@@ -111,6 +111,11 @@ is written with the report block ready for Sungrazer's form. With
 stages page an ntfy topic with the `kreutz.report` command to run. With
 `--render`, a confirmed object's cutouts and pictures are made in the
 background under `data/render/`.
+With `--keep-days N`, frames and significance maps more than N days old are
+deleted (about 1.6 GB a day otherwise accumulates); alerts, logs and renders
+are kept, and a pruned day comes back with `kreutz.fetch`. Frames share a
+directory with the archive fetcher, so use it only where nothing else keeps
+frames there.
 Kreutz reports from other coronagraphs can't be matched by position; a
 lane track while one of them has a Kreutz comet in view counts as that
 comet. `kreutz.score` later compares each alert with the reports that
