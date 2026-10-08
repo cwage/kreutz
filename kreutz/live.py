@@ -292,7 +292,10 @@ def main():
             done.add(t)
             print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {len(chains)} open tracks",
                   file=sys.stderr)
-            pending = follow_up(seq, last, pending, args.notify, args.render)
+            try:
+                pending = follow_up(seq, last, pending, args.notify, args.render)
+            except Exception as e:  # a follow-up must never take the watcher down
+                print(f"{t:%H:%M} follow-up error: {e}", file=sys.stderr)
             for ch in chains:
                 if len(ch) == args.link and not is_known(ch[-1], t) \
                         and moves([dict(c, t=datetime.fromisoformat(c["time"])) for c in ch]):
