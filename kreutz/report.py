@@ -50,8 +50,12 @@ def centroid(seq, i, x, y):
 
 
 def measure(seq, i0, x, y, vx, vy, back=12, ahead=12, lost=2):
-    """[(time, x, y, sigma)] for every frame the object was seen in."""
-    track = follow(seq, i0, x, y, vx, vy, back, ahead, lost)
+    """[(time, x, y, sigma)] for every frame the object was seen in; empty
+    if it was seen in none."""
+    try:
+        track = follow(seq, i0, x, y, vx, vy, back, ahead, lost)
+    except ValueError:  # not seen anywhere in the span
+        return []
     out = []
     for i in sorted(track):
         px, py, sig = track[i]
