@@ -289,6 +289,7 @@ def follow_up(seq, last, pending, notify, render=False):
         f["t"], f["x"], f["y"] = t, x, y
         if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
             f["confirmed"] = True
+            f["confirmed_utc"] = now.isoformat(timespec="seconds")
             lines, note = block(f["points"])
             path = f["alert"].replace(".json", ".confirmed.json")
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
@@ -440,6 +441,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None, track_of
             "first": f["track"][0]["time"], "last_seen": f["t"].isoformat(timespec="seconds"),
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
+            "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(f.get("known") or matched_report(f["track"], reps, held=bool(f.get("confirmed")))),
             "pictures": rendered(name), "rendering": rendering(f)})
     decisions = []
@@ -630,7 +632,8 @@ def main():
                     pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
-                                    "vx": c["vx"], "vy": c["vy"], "misses": 0})
+                                    "vx": c["vx"], "vy": c["vy"], "misses": 0,
+                                    "decided_utc": now_utc.isoformat(timespec="seconds")})
                     if args.notify:
                         try:
                             subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])

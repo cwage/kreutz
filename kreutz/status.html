@@ -20,6 +20,7 @@
            font-weight: 600; color: #000; margin: 0 6px 4px 0; max-width: 100%; box-sizing: border-box; }
   .candidate { background: var(--hot); } .confirmed { background: var(--ok); }
   .known { background: var(--known); } .quiet { background: var(--bad); }
+  .lead { background: var(--ok); } .lag { background: var(--line); color: var(--fg); font-weight: 500; }
   .row { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
   .row img { width: 160px; border-radius: 4px; background: #000; flex: none; }
   code { color: var(--fg); background: #000; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
@@ -79,6 +80,25 @@ const reportBadge = k => {
   return `<span class="badge known">${link(k, `${text}${how ? ` (${esc(how)})` : ''}`)}</span>`;
 };
 const bust = (p, iso) => p ? `${p}?${encodeURIComponent(iso || '')}` : null;
+const utc = iso => Date.parse(iso.endsWith('Z') ? iso : iso + 'Z');
+const span = ms => {
+  const m = Math.round(Math.abs(ms) / 60000);
+  return m < 90 ? `${m} min` : m < 48 * 60 ? `${(m / 60).toFixed(1)} h` : `${(m / 1440).toFixed(1)} d`;
+};
+// Who was first: the report's posting against when this watcher found the
+// object (its candidate alert), and against when it confirmed it.
+const leadBadge = (k, foundIso, confirmedIso) => {
+  if (!k || !k.posted_utc || !foundIso) return '';
+  const d = utc(k.posted_utc) - utc(foundIso);
+  let conf = '';
+  if (confirmedIso) {
+    const dc = utc(k.posted_utc) - utc(confirmedIso);
+    conf = ` · confirmed here ${span(dc)} ${dc >= 0 ? 'before' : 'after'} the report`;
+  }
+  return d >= 0
+    ? `<span class="badge lead" title="found here ${hhmm(foundIso)}, report posted ${hhmm(k.posted_utc)}${conf}">found here ${span(d)} before the report</span>`
+    : `<span class="badge lag" title="report posted ${hhmm(k.posted_utc)}, found here ${hhmm(foundIso)}${conf}">reported ${span(d)} before we found it</span>`;
+};
 // a thumbnail that opens the lightbox, by mouse or by Enter/Space
 const opener = name => `role="button" tabindex="0" onclick="openBox('${esc(name)}')" `
   + `onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBox('${esc(name)}'); }"`;
@@ -92,7 +112,7 @@ function card(f, s) {
   const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
   return `<div class="row">
     <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f.name)}>
-    <div>${stage}${reportBadge(f.report)}
+    <div>${stage}${reportBadge(f.report)}${leadBadge(f.report, f.decided_utc, f.confirmed_utc)}
       <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
         · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
@@ -120,6 +140,9 @@ function row(hist) {
   const last = hist.at(-1), first = hist[0];
   // noise that faded, or a star, isn't 'unreported'; only a real match is worth a badge
   const report = ['star', 'faded'].includes(last.kind) && !last.report ? '' : reportBadge(last.report);
+  const found = hist.find(r => ['alert', 'reported'].includes(r.kind));
+  const confirmed = hist.find(r => r.kind === 'confirmed');
+  const lead = found && last.kind !== 'star' ? leadBadge(last.report, found.decided_utc, confirmed && confirmed.decided_utc) : '';
   const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
               : last.kind === 'ended' ? ` after ${last.frames} frames` : '';
   const timeline = hist.map(r => `${LABEL[r.kind] || r.kind} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
@@ -127,7 +150,7 @@ function row(hist) {
   const stamp = last.pictures ? last.pictures.made_utc : last.decided_utc;
   return `<div class="row">
     ${pic ? `<img src="${bust(pic, stamp)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
-    <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${LABEL[last.kind] || last.kind}</span>${report}${extra}
+    <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${LABEL[last.kind] || last.kind}</span>${report}${lead}${extra}
       <div class="meta">${timeline} UTC (${ago(last.decided_utc)}) · seen ${hhmm(first.first)} → ${hhmm(last.last)}
         at ${last.x.toFixed(0)},${last.y.toFixed(0)}${last.name ? ` · ${esc(last.name)}` : ''}</div>
     </div></div>`;
