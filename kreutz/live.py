@@ -289,6 +289,7 @@ def follow_up(seq, last, pending, notify, render=False):
         f["t"], f["x"], f["y"] = t, x, y
         if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
             f["confirmed"] = True
+            f["confirmed_utc"] = now.isoformat(timespec="seconds")
             lines, note = block(f["points"])
             path = f["alert"].replace(".json", ".confirmed.json")
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
@@ -375,7 +376,25 @@ def load_state(now, span, path=STATE):
     pending = [f | {"t": datetime.fromisoformat(f["t"]),
                     "points": [(datetime.fromisoformat(t), x, y, s) for t, x, y, s in f["points"]]}
                for f in d["pending"]]
+    for f in pending:  # saved before the follow-up carried these: the alert files have them
+        files = alert_files(Path(f["alert"]).stem)
+        f.setdefault("decided_utc", (files["alert"] or {}).get("decided_utc"))
+        f.setdefault("confirmed_utc", (files["confirmed"] or {}).get("decided_utc"))
     return done, d["chains"], pending
+
+
+def alert_files(name):
+    """An alert's .json and .confirmed.json as dicts (None where missing);
+    an old alert file that's a bare track list is wrapped."""
+    out = {}
+    for key, suffix in (("alert", ".json"), ("confirmed", ".confirmed.json")):
+        p = LIVE / "alerts" / f"{name}{suffix}"
+        if not p.exists():
+            out[key] = None
+            continue
+        d = json.load(open(p))
+        out[key] = d if isinstance(d, dict) else {"track": d}
+    return out
 
 
 STATUS_RECENT = 20  # decisions shown on the status page
@@ -404,13 +423,15 @@ def pictures(name, root=None):
     return out
 
 
-def status(chains, pending, t, recent, now, rendered=lambda name: None, track_of=lambda name: None,
-           reps=None):
+def status(chains, pending, t, recent, now, rendered=lambda name: None,
+           files_of=lambda name: {"alert": None, "confirmed": None}, reps=None):
     """The status page's data: what's open, what's being followed and at
     which stage, and the last decisions. Paths are relative to data/live/.
     Each object's "report" is the Sungrazer report that fits it as of now:
     what it was known as when decided, else matched_report() against reps.
-    rendered(name) gives a render's pictures() or None."""
+    rendered(name) gives a render's pictures() or None; files_of(name) an
+    alert's files (alert_files), which carry the full track and the times
+    the object was found and confirmed, whatever the log window shows."""
     longest = max(chains, key=len) if chains else None
 
     by_id = {r["id"]: r for r in reps or []}
@@ -440,18 +461,22 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None, track_of
             "first": f["track"][0]["time"], "last_seen": f["t"].isoformat(timespec="seconds"),
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
+            "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(f.get("known") or matched_report(f["track"], reps, held=bool(f.get("confirmed")))),
             "pictures": rendered(name), "rendering": rendering(f)})
     decisions = []
     for r in recent:
         name = Path(r["alert"]).stem if r.get("alert") else None
+        files = files_of(name) if name else {"alert": None, "confirmed": None}
+        track = (files["alert"] or {}).get("track")
         known = with_url(r.get("known"), r.get("report"))
         decisions.append({
             "kind": r["kind"], "decided_utc": r["decided_utc"], "first": r["first"], "last": r["last"],
             "x": r["x"], "y": r["y"], "name": name, "gif": f"alerts/{name}.gif" if name else None,
             "known": known, "how": r.get("how"), "frames": r.get("frames"), "note": r.get("note"),
-            "report": known or with_url(matched_report(track_of(name) if name else None, reps,
-                                                       held=r["kind"] in ("confirmed", "ended"))),
+            "found_utc": (files["alert"] or {}).get("decided_utc") or (r["decided_utc"] if r["kind"] in ("alert", "reported") else None),
+            "confirmed_utc": (files["confirmed"] or {}).get("decided_utc"),
+            "report": known or with_url(matched_report(track, reps, held=r["kind"] in ("confirmed", "ended"))),
             "pictures": rendered(name) if name else None})
     return {"updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
             "open": len(chains), "longest": len(longest) if longest else 0,
@@ -464,15 +489,8 @@ def write_status(chains, pending, t, reps=None):
     recent = [json.loads(ln) for ln in open(p).readlines()[-STATUS_RECENT:]] if p.exists() else []
     recent.reverse()
 
-    def track_of(name):
-        f = LIVE / "alerts" / f"{name}.json"
-        if not f.exists():
-            return None
-        d = json.load(open(f))
-        return d["track"] if isinstance(d, dict) else d
-
     s = status(chains, pending, t, recent, datetime.now(timezone.utc).replace(tzinfo=None),
-               rendered=pictures, track_of=track_of, reps=reps)
+               rendered=pictures, files_of=alert_files, reps=reps)
     tmp = LIVE / "status.json.tmp"
     tmp.write_text(json.dumps(s, indent=1))
     tmp.replace(LIVE / "status.json")
@@ -630,7 +648,8 @@ def main():
                     pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
-                                    "vx": c["vx"], "vy": c["vy"], "misses": 0})
+                                    "vx": c["vx"], "vy": c["vy"], "misses": 0,
+                                    "decided_utc": now_utc.isoformat(timespec="seconds")})
                     if args.notify:
                         try:
                             subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])

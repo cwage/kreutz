@@ -4,6 +4,7 @@ changes."""
 
 from datetime import datetime, timedelta, timezone
 
+import json
 import numpy as np
 import pytest
 
@@ -138,6 +139,8 @@ def test_status_stages_and_paths():
     assert f["pictures"] is pics
     assert f["last_seen"] == "2026-10-08T23:00:25"
     a, b = s["recent"]
+    assert a["found_utc"] == "2026-10-09T12:16:12" and a["confirmed_utc"] is None  # from the log line itself
+    assert b["found_utc"] is None
     assert a["gif"] == "alerts/20261009T1200_1876_1215.gif" and a["pictures"] is None
     assert a["known"]["url"] == "https://sungrazer.nrl.navy.mil/report/reportjr20261009074834"
     assert b["name"] is None and b["gif"] is None
@@ -152,6 +155,17 @@ def test_status_stages_and_paths():
     s = live.status([], [pend], datetime(2026, 10, 8, 23, 0, 25), [], datetime(2026, 10, 9, 4, 0), reps=reps)
     f, = s["following"]
     assert f["known"] is None and f["report"]["how"] == "position" and f["report"]["reporter"] == "Me"
+    # a decision row whose alert/confirmed lines have left the log window still carries its times
+    ended = {"kind": "ended", "decided_utc": "2026-10-09T11:20:00", "first": "2026-10-08T21:45:25",
+             "last": "2026-10-09T11:00:25", "x": 1.0, "y": 2.0, "frames": 44,
+             "alert": "/data/live/alerts/20261008T2215_1913_1225.json"}
+    files = {"alert": {"track": pend["track"], "decided_utc": "2026-10-08T22:35:10"},
+             "confirmed": {"decided_utc": "2026-10-08T22:45:30"}}
+    s = live.status([], [], datetime(2026, 10, 9, 11, 0, 25), [ended], datetime(2026, 10, 9, 12, 0),
+                    files_of=lambda name: files, reps=reps)
+    r, = s["recent"]
+    assert (r["found_utc"], r["confirmed_utc"]) == ("2026-10-08T22:35:10", "2026-10-08T22:45:30")
+    assert r["report"]["reporter"] == "Me"  # matched from the file's full track
     assert f["report"]["url"].endswith("/report/reportcw20261008230000")
     # another instrument's Kreutz report hours later, while the object is still crossing: likely it
     reps = [{"id": "report_eb_20261008225115", "reporter": "Eryk Banach", "telescope": "CCOR2",
@@ -249,3 +263,16 @@ def test_preview_scale_ignores_flash_frames():
     assert -4 < lo < -1.5 and 1.5 < hi < 4  # the noise's own scale, not the flash's
     naive_hi = np.nanpercentile(cube, 99.7)
     assert naive_hi > 100
+
+
+def test_load_state_backfills_times_from_alert_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(live, "LIVE", tmp_path)
+    (tmp_path / "alerts").mkdir()
+    (tmp_path / "alerts" / "a.json").write_text(json.dumps({"track": [], "decided_utc": "2026-10-09T19:28:00"}))
+    (tmp_path / "alerts" / "a.confirmed.json").write_text(json.dumps({"decided_utc": "2026-10-09T19:51:00"}))
+    t0 = datetime(2026, 10, 9, 19, 45, 25)
+    old = {"alert": str(tmp_path / "alerts" / "a.json"), "track": [], "points": [], "t": t0, "x": 0, "y": 0,
+           "vx": 0, "vy": 0, "misses": 0}
+    live.save_state({t0}, [], [old], timedelta(hours=13), tmp_path / "state.json")
+    _, _, (f,) = live.load_state(t0, timedelta(hours=13), tmp_path / "state.json")
+    assert (f["decided_utc"], f["confirmed_utc"]) == ("2026-10-09T19:28:00", "2026-10-09T19:51:00")
