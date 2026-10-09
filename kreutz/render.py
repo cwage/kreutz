@@ -210,7 +210,8 @@ def main():
     ap.add_argument("vx", nargs="?", type=float)
     ap.add_argument("vy", nargs="?", type=float)
     ap.add_argument("--vet", nargs=2, metavar=("JSON", "N"),
-                    help="take time/x/y/vx/vy from entry N of a to-vet or shortlist file")
+                    help="take time/x/y/vx/vy from entry N of a to-vet or shortlist file, "
+                         "or from a live alert file (N ignored)")
     ap.add_argument("--back", type=int, default=48, help="frames to follow back (default 12 h)")
     ap.add_argument("--ahead", type=int, default=48)
     ap.add_argument("--lost", type=int, default=4, help="consecutive misses before giving up")
@@ -218,7 +219,10 @@ def main():
     args = ap.parse_args()
     if args.vet:
         c = json.load(open(args.vet[0]))
-        c = c["candidates"][int(args.vet[1])] if isinstance(c, dict) else c[int(args.vet[1])]
+        if isinstance(c, dict) and "track" in c:  # a live alert: its track's last window
+            c = c["track"][-1]
+        else:
+            c = c["candidates"][int(args.vet[1])] if isinstance(c, dict) else c[int(args.vet[1])]
         t, x, y, vx, vy = datetime.fromisoformat(c["time"][:19]), c["x"], c["y"], c["vx"], c["vy"]
     else:
         t, x, y, vx, vy = datetime.fromisoformat(args.time), args.x, args.y, args.vx, args.vy
