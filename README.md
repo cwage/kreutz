@@ -110,7 +110,22 @@ is written with the report block ready for Sungrazer's form. With
 `--notify "python -m kreutz.notify"` and `NTFY_TOPIC` set in `.env`, both
 stages page an ntfy topic with the `kreutz.report` command to run. With
 `--render`, a confirmed object's cutouts and pictures are made in the
-background under `data/render/`.
+background under `data/render/`, and remade every few frames while it stays
+in view, so the pictures grow with the passage.
+A comet somebody has already reported gets the same files, follow-up and
+pictures, logged as `reported` rather than `alert`; the notification for it
+is a single low-priority one at the confirmed stage.
+
+After every window the watcher rewrites `data/live/status.json`: open chains,
+what's being followed and at which stage (candidate at three windows,
+confirmed at five frames), whether and by whom it's already reported, and
+the last decisions. `data/live/status.html` is a static page over it:
+
+```
+python -m http.server -d data 8000     # then http://localhost:8000/live/status.html
+```
+
+Chains under three windows are mostly noise and appear only as a count.
 With `--keep-days N`, frames and significance maps more than N days old are
 deleted (about 1.6 GB a day otherwise accumulates); alerts, logs and renders
 are kept, and a pruned day comes back with `kreutz.fetch`. Frames share a

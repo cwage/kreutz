@@ -30,7 +30,7 @@ def alerts():
             r = json.loads(ln)
             if r["kind"] == "confirmed":
                 confirmed[r.get("alert", "").rsplit("/", 1)[-1]] = r["decided_utc"]
-            if r["kind"] == "alert":
+            if r["kind"] == "alert" or (r["kind"] == "reported" and r.get("alert")):
                 out.append(r)
                 seen.add(r.get("alert", "").rsplit("/", 1)[-1])
     for r in out:

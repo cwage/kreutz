@@ -114,3 +114,100 @@ def test_open_tracks_names_the_longest_chain():
     comet = [{"x": 1876.0, "y": 1215.0}, {"x": 1868.2, "y": 1223.1}, {"x": 1860.0, "y": 1231.0}]
     assert live.open_tracks([blip]) == "1 open tracks (longest 1 windows, at 100,201)"
     assert live.open_tracks([blip, comet]) == "2 open tracks (longest 3 windows, at 1860,1231)"
+
+
+def test_status_stages_and_paths():
+    pend = {"alert": "/data/live/alerts/20261008T2215_1913_1225.json", "misses": 1, "confirmed": True,
+            "track": [{"time": "2026-10-08T21:45:25", "x": 1930.0, "y": 1220.0, "vx": -8.0, "vy": 2.0}],
+            "points": [None] * 6, "t": datetime(2026, 10, 8, 23, 0, 25), "x": 1890.0, "y": 1230.0,
+            "vx": -8.0, "vy": 2.0, "known": None, "others": [{"reporter": "X"}]}
+    recent = [{"kind": "reported", "decided_utc": "2026-10-09T12:16:12", "first": "2026-10-09T11:30:25",
+               "last": "2026-10-09T12:00:25", "x": 1876.0, "y": 1215.0, "report": "Jiangao Ruan report_jr_20261009074834 (CCOR1)",
+               "how": "position", "alert": "/data/live/alerts/20261009T1200_1876_1215.json",
+               },  # an older entry: no 'known' record, only the report string
+              {"kind": "star", "decided_utc": "2026-10-09T08:00:00", "first": "2026-10-09T07:00:25",
+               "last": "2026-10-09T07:30:25", "x": 10.0, "y": 20.0}]
+    chains = [[{"x": 1.0, "y": 2.0}], [{"x": 3.0, "y": 4.0}, {"x": 5.0, "y": 6.0}]]
+    pics = {"preview": "../render/20261008T2215_1913_1225/preview.gif", "styles": {}}
+    s = live.status(chains, [pend], datetime(2026, 10, 8, 23, 0, 25), recent, datetime(2026, 10, 8, 23, 5),
+                    rendered=lambda name: pics if name == "20261008T2215_1913_1225" else None)
+    assert (s["open"], s["longest"], s["longest_at"]) == (2, 2, [5.0, 6.0])
+    f, = s["following"]
+    assert f["stage"] == "confirmed" and f["points"] == 6 and f["others"] == 1
+    assert f["gif"] == "alerts/20261008T2215_1913_1225.gif"
+    assert f["pictures"] is pics
+    assert f["last_seen"] == "2026-10-08T23:00:25"
+    a, b = s["recent"]
+    assert a["gif"] == "alerts/20261009T1200_1876_1215.gif" and a["pictures"] is None
+    assert a["known"]["url"] == "https://sungrazer.nrl.navy.mil/report/reportjr20261009074834"
+    assert b["name"] is None and b["gif"] is None
+    assert a["report"]["url"].endswith("reportjr20261009074834")
+    assert (a["report"]["reporter"], a["report"]["telescope"]) == ("Jiangao Ruan", "CCOR1")
+    # an unreported confirmation matched after the fact against a report that appeared since
+    reps = [{"id": "report_cw_20261008230000", "reporter": "Me", "telescope": "CCOR1", "group": "Kreutz",
+             "kind": "Potential Comet", "posted_utc": "2026-10-09T03:00:00Z",
+             "points": [["2245", 1898.0, 1228.0], ["2300", 1890.0, 1230.0], ["2315", 1882.0, 1232.0]]}]
+    pend["track"] = [{"time": "2026-10-08T22:45:25", "x": 1898.0, "y": 1228.0, "vx": -8.0, "vy": 2.0},
+                     {"time": "2026-10-08T23:00:25", "x": 1890.0, "y": 1230.0, "vx": -8.0, "vy": 2.0}]
+    s = live.status([], [pend], datetime(2026, 10, 8, 23, 0, 25), [], datetime(2026, 10, 9, 4, 0), reps=reps)
+    f, = s["following"]
+    assert f["known"] is None and f["report"]["how"] == "position" and f["report"]["reporter"] == "Me"
+    assert f["report"]["url"].endswith("/report/reportcw20261008230000")
+    # another instrument's Kreutz report hours later, while the object is still crossing: likely it
+    reps = [{"id": "report_eb_20261008225115", "reporter": "Eryk Banach", "telescope": "CCOR2",
+             "group": "Kreutz", "kind": "Potential Comet", "posted_utc": "2026-10-09T02:51:15Z",
+             "points": [["0200", 1509.0, 1398.0], ["0215", 1502.0, 1394.0], ["0230", 1496.0, 1388.0]]}]
+    s = live.status([], [pend], datetime(2026, 10, 8, 23, 0, 25), [], datetime(2026, 10, 9, 4, 0), reps=reps)
+    assert s["following"][0]["report"]["how"] == "time"
+    assert s["following"][0]["report"]["reporter"] == "Eryk Banach"
+    pend["confirmed"] = False  # a candidate that hasn't held gets no time-only guess
+    s = live.status([], [pend], datetime(2026, 10, 8, 23, 0, 25), [], datetime(2026, 10, 9, 4, 0), reps=reps)
+    assert s["following"][0]["report"] is None
+
+
+def test_notify_is_quiet_about_known_comets():
+    from kreutz import notify
+    track = [{"time": "2026-10-09T11:30:25", "x": 1893.0, "y": 1219.0, "vx": -9.0, "vy": -2.0}]
+    known = {"reporter": "Jiangao Ruan", "id": "r1", "telescope": "CCOR1",
+             "posted_utc": "2026-10-09T11:48:34Z", "kind": "Potential Comet", "how": "position"}
+    assert notify.compose({"track": track, "known": known}, "a.json") is None
+    title, lines, prio, _ = notify.compose({"kind": "confirmed", "track": track, "known": known,
+                                            "frames": 5, "note": "ok"}, "a.confirmed.json")
+    assert prio == "low" and "Jiangao Ruan" in title and "2026-10-09 11:48 UTC" in lines[0]
+    assert lines[-1].endswith("kreutz.report /data/live/alerts/a.confirmed.json")
+    title, _, prio, _ = notify.compose({"track": track, "other_instruments": []}, "a.json")
+    assert (title, prio) == ("kreutz: candidate, UNREPORTED", "high")
+    title, _, prio, _ = notify.compose({"kind": "confirmed", "track": track, "other_instruments": [],
+                                        "frames": 5, "note": "ok"}, "a.confirmed.json")
+    assert (title, prio) == ("kreutz: CONFIRMED, report ready", "urgent")
+
+
+def test_seen_extends_the_track_to_the_last_measurement():
+    f = {"track": [{"time": "2026-10-08T22:15:25", "x": 1913.0, "y": 1225.0, "vx": -8.0, "vy": 2.0}],
+         "points": [(datetime(2026, 10, 9, 3, 0, 25), 1760.0, 1263.0, 5.0)], "vx": -8.1, "vy": 2.1}
+    s = live.seen(f)
+    assert s[0] is f["track"][0] and s[-1]["time"] == "2026-10-09T03:00:25" and s[-1]["x"] == 1760.0
+    assert live.seen({"track": f["track"], "points": [], "vx": 0, "vy": 0}) == f["track"]
+
+
+def test_field_gif_levels_survive_shrinking():
+    from kreutz import style
+    rng = np.random.default_rng(0)
+    big = rng.normal(60, 15, (900, 1200)).clip(0, 255).astype(np.uint8)
+    small, k = style.shrunk(big, 800)
+    assert small.shape == (600, 800) and abs(k - 2 / 3) < 1e-9
+    assert len(np.unique(style.coarser(small, 64))) <= 64
+    assert style.shrunk(small, 800)[1] == 1.0
+
+
+def test_pictures_lists_what_a_render_has(tmp_path):
+    assert live.pictures("none", tmp_path) is None
+    d = tmp_path / "x"
+    (d / "style-soft").mkdir(parents=True)
+    (d / "style-tintype").mkdir()
+    (d / "preview.gif").write_bytes(b"")
+    (d / "style-soft" / "field.gif").write_bytes(b"")
+    (d / "style-soft" / "still.png").write_bytes(b"")
+    assert live.pictures("x", tmp_path) == {
+        "preview": "../render/x/preview.gif",
+        "styles": {"soft": {"field": "../render/x/style-soft/field.gif", "still": "../render/x/style-soft/still.png"}}}

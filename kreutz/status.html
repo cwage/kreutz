@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kreutz live</title>
+<style>
+  :root { --bg: #0d0f12; --card: #171a20; --line: #2a2f38; --fg: #d8dce3; --dim: #8a919c;
+          --hot: #f2a93b; --ok: #5ac46a; --known: #6ea8fe; --bad: #8a919c; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em;
+       margin: 24px 0 8px; }
+  .meta { color: var(--dim); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .card img { display: block; max-width: 100%; border-radius: 4px; background: #000; margin-top: 8px; }
+  a { color: inherit; } .badge a { color: #000; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+           font-weight: 600; color: #000; margin-right: 6px; }
+  .candidate { background: var(--hot); } .confirmed { background: var(--ok); }
+  .known { background: var(--known); } .quiet { background: var(--bad); }
+  .row { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+  .row img { width: 160px; border-radius: 4px; background: #000; flex: none; }
+  code { color: var(--fg); background: #000; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .empty { color: var(--dim); font-style: italic; }
+  .card img, .row img { cursor: zoom-in; }
+  img[tabindex]:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+  dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+           padding: 12px; max-width: calc(100vw - 32px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .8); }
+  dialog img { display: block; max-width: calc(100vw - 56px); max-height: calc(100vh - 140px);
+               background: #000; margin: 8px auto 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  .bar button { background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 999px;
+                padding: 2px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  .bar button.on { background: var(--fg); color: #000; border-color: var(--fg); }
+  .bar .x { margin-left: auto; }
+</style>
+</head>
+<body>
+<h1>kreutz live</h1>
+<div class="meta" id="meta">loading status.json…</div>
+
+<h2>Following</h2>
+<div class="cards" id="following"></div>
+
+<h2>Recent decisions</h2>
+<div id="recent"></div>
+
+<dialog id="box">
+  <div class="bar">
+    <b id="box-name"></b>
+    <span id="box-views"></span>
+    <span id="box-styles"></span>
+    <a id="box-file" href="" target="_blank" rel="noopener">open file</a>
+    <button class="x" onclick="document.getElementById('box').close()">close</button>
+  </div>
+  <img id="box-img" alt="">
+</dialog>
+
+<script>
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const hhmm = iso => iso ? iso.slice(5, 16).replace('T', ' ') + ' UTC' : '?';
+const ago = iso => {
+  const m = Math.round((Date.now() - Date.parse(iso + 'Z')) / 60000);
+  return m < 60 ? `${m} min ago` : `${(m / 60).toFixed(1)} h ago`;
+};
+const link = (k, text) => k && k.url ? `<a href="${esc(k.url)}" target="_blank" rel="noopener">${text}</a>` : text;
+// The Sungrazer report that fits the object, as of the last snapshot: by
+// position (a CCOR-1 report), by time+lane (another coronagraph, decided at
+// alert time), or by time alone, which is only likely the same object.
+const reportBadge = k => {
+  if (!k) return `<span class="badge candidate">UNREPORTED</span>`;
+  const when = k.posted_utc ? ` ${hhmm(k.posted_utc)}` : '';
+  const how = [k.telescope, k.how === 'time' ? 'same time' : k.how && `by ${k.how}`].filter(Boolean).join(', ');
+  const text = k.how === 'time' ? `likely ${esc(k.reporter)}'s,${when}` : `reported by ${esc(k.reporter || k.id)}${when}`;
+  return `<span class="badge known">${link(k, `${text}${how ? ` (${esc(how)})` : ''}`)}</span>`;
+};
+const bust = (p, iso) => p ? `${p}?${encodeURIComponent(iso || '')}` : null;
+// a thumbnail that opens the lightbox, by mouse or by Enter/Space
+const opener = name => `role="button" tabindex="0" onclick="openBox('${esc(name)}')" `
+  + `onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBox('${esc(name)}'); }"`;
+
+function card(f, s) {
+  const stage = f.stage === 'confirmed'
+    ? `<span class="badge confirmed">confirmed, ${f.points} frames</span>`
+    : `<span class="badge candidate">candidate, ${f.points}/5 frames</span>`;
+  const pic = f.pictures ? bust(f.pictures.preview, s.updated_utc) : bust(f.gif, f.first);
+  const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
+  return `<div class="card">
+    <div>${stage}${reportBadge(f.report)}</div>
+    <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
+      · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
+      ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
+      ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}</div>
+    <div class="meta"><code>docker compose run --rm kreutz kreutz.report /data/live/${esc(f.alert)}</code></div>
+    <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f.name)}>
+  </div>`;
+}
+
+const LABEL = {alert: 'candidate', confirmed: 'confirmed', reported: 'already reported',
+               star: 'a star', faded: 'faded', ended: 'left the field'};
+const STYLE = {alert: 'candidate', confirmed: 'confirmed', reported: 'known'};
+
+// One row per object: its decisions in the log, oldest first.
+function group(recent) {
+  const by = new Map();
+  for (const r of recent) {
+    const key = r.name || `${r.kind}@${r.decided_utc}`;
+    if (!by.has(key)) by.set(key, []);
+    by.get(key).unshift(r);  // recent is newest-first; keep each history oldest-first
+  }
+  return [...by.values()].sort((a, b) => b.at(-1).decided_utc.localeCompare(a.at(-1).decided_utc));
+}
+
+function row(hist) {
+  const last = hist.at(-1), first = hist[0];
+  // noise that faded, or a star, isn't 'unreported'; only a real match is worth a badge
+  const report = ['star', 'faded'].includes(last.kind) && !last.report ? '' : reportBadge(last.report);
+  const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
+              : last.kind === 'ended' ? ` after ${last.frames} frames` : '';
+  const timeline = hist.map(r => `${LABEL[r.kind] || r.kind} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
+  const pic = last.pictures ? last.pictures.preview : last.gif;
+  return `<div class="row">
+    ${pic ? `<img src="${bust(pic, last.decided_utc)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
+    <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${LABEL[last.kind] || last.kind}</span>${report}${extra}
+      <div class="meta">${timeline} UTC (${ago(last.decided_utc)}) · seen ${hhmm(first.first)} → ${hhmm(last.last)}
+        at ${last.x.toFixed(0)},${last.y.toFixed(0)}${last.name ? ` · ${esc(last.name)}` : ''}</div>
+    </div></div>`;
+}
+
+// The lightbox: one object's pictures, by view (crop, field, still, or the
+// plain preview) and style preset. The last choice is remembered.
+let objects = {}, boxState = {name: null, view: 'field', style: 'soft'};
+try { Object.assign(boxState, JSON.parse(localStorage.getItem('box') || '{}'), {name: null}); } catch (e) {}
+
+function pictureFor(o, view, style) {
+  const p = o.pictures;
+  if (!p) return view === 'preview' ? o.gif : null;
+  if (view === 'preview') return p.preview;
+  return (p.styles[style] || {})[view] || null;
+}
+
+function openBox(name) {
+  boxState.name = name;
+  drawBox();
+  const box = document.getElementById('box');
+  if (!box.open) box.showModal();
+  history.replaceState(null, '', `#${name}`);
+}
+
+function drawBox() {
+  const o = objects[boxState.name];
+  if (!o) return;
+  const styles = o.pictures ? Object.keys(o.pictures.styles) : [];
+  if (!styles.includes(boxState.style)) boxState.style = styles[0] || null;
+  const views = o.pictures ? ['field', 'crop', 'still', 'preview'] : ['preview'];
+  if (!pictureFor(o, boxState.view, boxState.style)) {
+    boxState.view = views.find(v => pictureFor(o, v, boxState.style)) || 'preview';
+  }
+  const src = pictureFor(o, boxState.view, boxState.style);
+  const btn = (key, val, on) => `<button class="${on ? 'on' : ''}" onclick="pick('${key}', '${val}')">${val}</button>`;
+  document.getElementById('box-name').textContent = o.name;
+  document.getElementById('box-views').innerHTML =
+    views.map(v => btn('view', v, v === boxState.view)).join('');
+  document.getElementById('box-styles').innerHTML =
+    boxState.view === 'preview' ? '' : styles.map(st => btn('style', st, st === boxState.style)).join('');
+  document.getElementById('box-img').src = src ? bust(src, o.stamp) : '';
+  document.getElementById('box-file').href = src || '';
+  try { localStorage.setItem('box', JSON.stringify({view: boxState.view, style: boxState.style})); } catch (e) {}
+}
+
+function pick(key, val) { boxState[key] = val; drawBox(); }
+document.getElementById('box').addEventListener('close', () => history.replaceState(null, '', ' '));
+
+async function refresh() {
+  let s;
+  try {
+    s = await (await fetch('status.json', {cache: 'no-store'})).json();
+  } catch (e) {
+    document.getElementById('meta').textContent = `status.json not readable: ${e}`;
+    return;
+  }
+  objects = {};
+  for (const f of s.following) objects[f.name] = {...f, stamp: s.updated_utc};
+  for (const r of s.recent) if (r.name && !objects[r.name]) objects[r.name] = {...r, stamp: r.decided_utc};
+  const stale = (Date.now() - Date.parse(s.updated_utc + 'Z')) > 45 * 60000;
+  document.getElementById('meta').innerHTML =
+    `window ${hhmm(s.window_utc)} · updated ${ago(s.updated_utc)}${stale ? ' <b>(stale: is the watcher running?)</b>' : ''}
+     · ${s.open} open chain(s)${s.longest ? `, longest ${s.longest} window(s) at ${s.longest_at[0].toFixed(0)},${s.longest_at[1].toFixed(0)}` : ''}
+     · chains under three windows are mostly noise and aren't shown`;
+  document.getElementById('following').innerHTML =
+    s.following.length ? s.following.map(f => card(f, s)).join('') : '<div class="empty">nothing being followed</div>';
+  document.getElementById('recent').innerHTML =
+    s.recent.length ? group(s.recent).map(row).join('') : '<div class="empty">no decisions yet</div>';
+  if (boxState.name) drawBox();
+  else if (location.hash.length > 1 && objects[location.hash.slice(1)]) openBox(location.hash.slice(1));
+}
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

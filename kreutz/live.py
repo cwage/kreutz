@@ -6,15 +6,23 @@ Polls the SWPC directory for new L1b frames, files them where the archive
 fetcher does (data/ccor1/l1b/YYYY/MM/DD/), and searches each new window as
 it lands. Candidates are linked across windows exactly as in evaluate.py;
 when a track fires it's checked against Sungrazer's latest reports: one
-somebody already reported from CCOR-1 is logged to data/live/known.jsonl
-and the watch goes on; anything else (and not already vetted into
-known.jsonl) is written to data/live/alerts/<time>.json with a crop
-animation beside it, remembered so it isn't raised again, and the watch
-goes on. The object is then measured in each new frame (report.py); once
-it has been seen in five frames a second, "confirmed" notification goes
-out with the report block ready to paste into Sungrazer's form. Every outcome (alert, star, already reported) is appended to
-data/live/log.jsonl with the wall-clock time it was decided, which is
-what score.py turns into a table of leads and lags against the reports.
+somebody already reported is noted as such; a track isn't raised twice
+(data/live/known.jsonl). Either way the track is written to
+data/live/alerts/<time>.json with a crop animation beside it, and the
+object is then measured in each new frame (report.py); once it has been
+seen in five frames a second, "confirmed" file is written with the report
+block ready to paste into Sungrazer's form, and it keeps being followed
+until it's lost. Every outcome (alert, star, already reported, confirmed,
+faded) is appended to data/live/log.jsonl with the wall-clock time it was
+decided, which is what score.py turns into a table of leads and lags
+against the reports.
+
+data/live/status.json is rewritten after every window: open chains,
+objects being followed with their stage (candidate at three windows,
+confirmed at five frames) and whether and by whom they're already
+reported, and the recent decisions. data/live/status.html reads it:
+
+    python -m http.server -d data 8000   # then http://localhost:8000/live/status.html
 
 Kreutz reports from other coronagraphs (CCOR-2, LASCO) can't be matched
 by position. A track in the Kreutz lane (lane.in_lane) while another
@@ -22,9 +30,12 @@ instrument has a Kreutz comet in view counts as that comet, matched "by
 time+lane"; the alert for anything else lists such reports as a hint.
 
 --notify CMD runs CMD with the alert's .json path appended, e.g.
---notify "python -m kreutz.notify" to post to an ntfy topic (notify.py).
+--notify "python -m kreutz.notify" to post to an ntfy topic (notify.py);
+it's the command's job to be quiet about known comets.
 --render makes a confirmed object's cutouts and pictures (render.py,
-style.py) in the background under data/render/<alert name>/.
+style.py) in the background under data/render/<alert name>/, and again
+every RENDER_EVERY frames while the object is still in view, so the
+pictures grow with the passage.
 --keep-days N deletes frames and significance maps more than N days old
 (prune), for an always-on watcher on a small disk. The frames directory is
 the archive fetcher's too, so don't use it where archive runs keep frames.
@@ -51,7 +62,7 @@ from . import DATA
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
 from .lane import build_field, in_lane
-from .reports import _fetch, parse
+from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, measure
 from .search import MAX_MISSING, consistent, search
@@ -158,12 +169,41 @@ def latest_reports():
 
 
 def reported_by(track, t, reps):
-    """The CCOR-1 report this track matches by position, if any."""
+    """The CCOR-1 report this track matches by position, if any, as
+    {reporter, id, telescope, posted_utc, kind, how}."""
     track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
     for r, pts, posted in report_points(reps, t.date()):
         if matches(track, pts):
-            return f"{r['reporter']} {r['id']}"
+            return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} \
+                | {"how": "position"}
     return None
+
+
+PASSAGE = timedelta(hours=12)  # a Kreutz comet stays in CCOR-1's field about this long after it's found
+
+
+def matched_report(track, reps, held=False):
+    """The report that fits a track, looked up after the fact (reports keep
+    arriving for hours after a decision): a CCOR-1 report by position, or,
+    for an object that held (confirmed), the earliest Kreutz report from
+    another instrument observed between a day before the track and the end
+    of its crossing, which is only 'likely' the same object (how: "time").
+    A blip that faded gets no such guess."""
+    if not reps or not track:
+        return None
+    t_last = datetime.fromisoformat(track[-1]["time"])
+    found = reported_by(track, t_last, reps)
+    if found or not held:
+        return found
+    others = other_kreutz(reps, datetime.fromisoformat(track[0]["time"]), t_last + PASSAGE)
+    if others:
+        return dict(min(others, key=lambda o: o["posted_utc"]), how="time")
+    return None
+
+
+def who(known):
+    """'Jiangao Ruan report_jr_... (CCOR1)' for a reported_by record."""
+    return f"{known['reporter']} {known['id']} ({known['telescope']})"
 
 
 def other_instruments(track, reps):
@@ -172,15 +212,51 @@ def other_instruments(track, reps):
                         datetime.fromisoformat(track[-1]["time"]))
 
 
-CONFIRM_LOST = 3  # consecutive frames without the object before a follow-up is dropped
+CONFIRM_LOST = 3  # consecutive frames without the object before a candidate is dropped
+CONFIRMED_LOST = 12  # the same for a confirmed object: it's real, so wait out a stray-light spell (3 h)
+RENDER_EVERY = 4  # frames between progress renders of a confirmed object
+RENDER_LOST = 8  # the render's follower tolerates this many misses (a stray-light hour)
+
+
+def start_render(f):
+    """kreutz.render and kreutz.style for a followed object, in the
+    background, covering the frames seen so far; the Popen is kept on the
+    entry so a slow render isn't started twice."""
+    c = f["track"][-1]
+    name = Path(f["alert"]).stem
+    ahead = max(24, len(f["points"]) + RENDER_LOST)
+    cmd = (f"python -m kreutz.render {c['time'][:16]} {c['x']} {c['y']} {c['vx']} {c['vy']} "
+           f"--back 24 --ahead {ahead} --lost {RENDER_LOST} --name {name} "
+           f"&& python -m kreutz.style /data/render/{name} --all")
+    f["render_proc"] = subprocess.Popen(["sh", "-c", cmd], cwd="/srv",
+                                        stdout=open(LIVE / "alerts" / f"{name}.render.log", "w"),
+                                        stderr=subprocess.STDOUT)
+    f["since_render"] = 0
+
+
+def rendering(f):
+    return f.get("render_proc") is not None and f["render_proc"].poll() is None
+
+
+def seen(f):
+    """A follow-up's track extended to its latest measured point, so a log
+    record's first/last and position cover the passage, not just the alert."""
+    if not f["points"]:
+        return f["track"]
+    t, x, y, _ = f["points"][-1]
+    return f["track"] + [{"time": t.isoformat(), "x": x, "y": y, "vx": f["vx"], "vy": f["vy"]}]
 
 
 def follow_up(seq, last, pending, notify, render=False):
     """Keep measuring alerted objects in each new frame. Once one has been
     seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
-    gets the report block and the notify command runs on it. An object
-    missing for CONFIRM_LOST frames in a row is dropped."""
+    gets the report block and the notify command runs on it. It's then
+    still followed, re-rendered every RENDER_EVERY frames if --render, until
+    it has been missing for CONFIRMED_LOST frames in a row (logged as
+    ended); a candidate missing CONFIRM_LOST frames before confirmation is
+    logged as faded."""
     keep = []
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     for f in pending:
         dt = (seq.times[last] - f["t"]) / FRAME
         if dt < 1:
@@ -190,25 +266,31 @@ def follow_up(seq, last, pending, notify, render=False):
                       back=0, ahead=0, lost=0)
         if not pts:
             f["misses"] += 1
-            if f["misses"] < CONFIRM_LOST:
+            if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
                 keep.append(f)
+            elif f.get("confirmed"):
+                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]))
+                if render and not rendering(f):
+                    start_render(f)  # the whole passage
             else:
-                log("faded", f["track"], datetime.now(timezone.utc).replace(tzinfo=None), alert=f["alert"])
+                log("faded", seen(f), now, alert=f["alert"])
             continue
         f["misses"] = 0
         f["points"].append(pts[-1])
+        f["since_render"] = f.get("since_render", 0) + 1
         t, x, y, _ = pts[-1]
         f["vx"], f["vy"] = (x - f["x"]) / dt, (y - f["y"]) / dt
         f["t"], f["x"], f["y"] = t, x, y
-        if len(f["points"]) >= MIN_POINTS:
+        if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
+            f["confirmed"] = True
             lines, note = block(f["points"])
             path = f["alert"].replace(".json", ".confirmed.json")
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
                        "frames": len(f["points"]), "other_instruments": f["others"],
-                       "decided_utc": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")},
+                       "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds")},
                       open(path, "w"), indent=1)
-            log("confirmed", f["track"], datetime.now(timezone.utc).replace(tzinfo=None),
-                alert=f["alert"], frames=len(f["points"]), note=note)
+            log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
+                known=f.get("known"))
             print(f"CONFIRMED {path} ({len(f['points'])} frames, {note})", flush=True)
             if notify:
                 try:
@@ -216,16 +298,9 @@ def follow_up(seq, last, pending, notify, render=False):
                 except OSError as e:
                     print(f"notify failed: {e}", file=sys.stderr)
             if render:
-                # the full-quality cutouts and pictures, in the background;
-                # covers the frames so far, re-run kreutz.render later for
-                # the whole passage
-                c = f["track"][-1]
-                name = Path(f["alert"]).stem
-                cmd = (f"python -m kreutz.render {c['time'][:16]} {c['x']} {c['y']} {c['vx']} {c['vy']} "
-                       f"--back 24 --ahead 24 --name {name} && python -m kreutz.style /data/render/{name} --all")
-                subprocess.Popen(["sh", "-c", cmd], cwd="/srv",
-                                 stdout=open(LIVE / "alerts" / f"{name}.render.log", "w"), stderr=subprocess.STDOUT)
-            continue  # one follow-up per alert
+                start_render(f)
+        elif f.get("confirmed") and render and f["since_render"] >= RENDER_EVERY and not rendering(f):
+            start_render(f)
         keep.append(f)
     return keep
 
@@ -261,6 +336,100 @@ def animation(seq, track, path):
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=400, loop=0)
 
 
+STATUS_RECENT = 20  # decisions shown on the status page
+STATUS_REPORTS_EVERY = timedelta(hours=1)  # how often the page's after-the-fact matches refresh
+
+
+def pictures(name, root=None):
+    """A render's pictures for the status page, as paths relative to
+    data/live/: the plain preview and each style preset's crop, field and
+    still, whichever exist; None without a render."""
+    d = (root or DATA / "render") / name
+    if not (d / "preview.gif").exists():
+        return None
+    out = {"preview": f"../render/{name}/preview.gif", "styles": {}}
+    for sd in sorted(d.glob("style-*")):
+        have = {k: f"../render/{name}/{sd.name}/{f}" for k, f in
+                (("crop", "crop.gif"), ("field", "field.gif"), ("still", "still.png")) if (sd / f).exists()}
+        if have:
+            out["styles"][sd.name[len("style-"):]] = have
+    return out
+
+
+def status(chains, pending, t, recent, now, rendered=lambda name: None, track_of=lambda name: None,
+           reps=None):
+    """The status page's data: what's open, what's being followed and at
+    which stage, and the last decisions. Paths are relative to data/live/.
+    Each object's "report" is the Sungrazer report that fits it as of now:
+    what it was known as when decided, else matched_report() against reps.
+    rendered(name) gives a render's pictures() or None."""
+    longest = max(chains, key=len) if chains else None
+
+    by_id = {r["id"]: r for r in reps or []}
+
+    def with_url(known, report=None):
+        """The known record with the report's page; older log entries have
+        only the 'Reporter report_xx_... (CCOR1)' string, so pull the id out
+        and fill the rest in from the fetched reports when it's there."""
+        if not known and report:
+            m = re.match(r"(.*?)\s*(report_[a-z]+_\d{14})\s*(?:\((\w+)\))?", report)
+            known = {"reporter": m.group(1), "id": m.group(2), "telescope": m.group(3)} if m else None
+        if not known or not known.get("id"):
+            return known
+        r = by_id.get(known["id"])
+        if r and not known.get("posted_utc"):
+            known = {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} \
+                | {k: v for k, v in known.items() if v is not None}
+        return dict(known, url=report_url(known["id"]))
+
+    following = []
+    for f in pending:
+        name = Path(f["alert"]).stem
+        following.append({
+            "name": name, "alert": f"alerts/{name}.json", "gif": f"alerts/{name}.gif",
+            "stage": "confirmed" if f.get("confirmed") else "candidate",
+            "points": len(f["points"]), "misses": f["misses"],
+            "first": f["track"][0]["time"], "last_seen": f["t"].isoformat(timespec="seconds"),
+            "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
+            "known": with_url(f.get("known")), "others": len(f.get("others") or []),
+            "report": with_url(f.get("known") or matched_report(f["track"], reps, held=bool(f.get("confirmed")))),
+            "pictures": rendered(name), "rendering": rendering(f)})
+    decisions = []
+    for r in recent:
+        name = Path(r["alert"]).stem if r.get("alert") else None
+        known = with_url(r.get("known"), r.get("report"))
+        decisions.append({
+            "kind": r["kind"], "decided_utc": r["decided_utc"], "first": r["first"], "last": r["last"],
+            "x": r["x"], "y": r["y"], "name": name, "gif": f"alerts/{name}.gif" if name else None,
+            "known": known, "how": r.get("how"), "frames": r.get("frames"), "note": r.get("note"),
+            "report": known or with_url(matched_report(track_of(name) if name else None, reps,
+                                                       held=r["kind"] in ("confirmed", "ended"))),
+            "pictures": rendered(name) if name else None})
+    return {"updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
+            "open": len(chains), "longest": len(longest) if longest else 0,
+            "longest_at": [longest[-1]["x"], longest[-1]["y"]] if longest else None,
+            "following": following, "recent": decisions}
+
+
+def write_status(chains, pending, t, reps=None):
+    p = LIVE / "log.jsonl"
+    recent = [json.loads(ln) for ln in open(p).readlines()[-STATUS_RECENT:]] if p.exists() else []
+    recent.reverse()
+
+    def track_of(name):
+        f = LIVE / "alerts" / f"{name}.json"
+        if not f.exists():
+            return None
+        d = json.load(open(f))
+        return d["track"] if isinstance(d, dict) else d
+
+    s = status(chains, pending, t, recent, datetime.now(timezone.utc).replace(tzinfo=None),
+               rendered=pictures, track_of=track_of, reps=reps)
+    tmp = LIVE / "status.json.tmp"
+    tmp.write_text(json.dumps(s, indent=1))
+    tmp.replace(LIVE / "status.json")
+
+
 def open_tracks(chains):
     """The open-tracks part of the per-window log line: how many chains
     are open and, if any, how long the longest is and where it was last
@@ -290,12 +459,14 @@ def main():
         ap.error("--keep-days must be at least 1")
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
+    shutil.copy(Path(__file__).with_name("status.html"), LIVE / "status.html")
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
     done = set()
     chains = []  # open tracks, as in evaluate.tracks
     pending = []  # alerted objects still being followed for a confirmed notification
     field = None  # the Kreutz lane, built once a frame shape is known
     pruned = None  # when prune last ran
+    reps, reps_at = None, None  # Sungrazer's latest reports, for the status page's matches
     while True:
         try:
             new = sync(datetime.now(timezone.utc).replace(tzinfo=None) - history - timedelta(hours=1))
@@ -361,46 +532,58 @@ def main():
                         log("star", ch, now_utc)
                         print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is a star", file=sys.stderr)
                         continue
-                    reps = latest_reports()
-                    who = reported_by(ch, t, reps) if reps else None
+                    reps = latest_reports() or reps
+                    reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    known_rep = reported_by(ch, t, reps) if reps else None
                     others = other_instruments(ch, reps)
-                    how = "position"
-                    if not who and others and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
+                    if not known_rep and others and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
                         # A lane track while another coronagraph has a Kreutz
                         # comet in view: the same object.
-                        o = others[0]
-                        who, how = f"{o['reporter']} {o['id']} ({o['telescope']})", "time+lane"
-                    if who:
-                        remember(c, f"reported: {who}")
-                        log("reported", ch, now_utc, report=who, how=how, others=others)
-                        print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) "
-                              f"already reported ({who}, by {how})", file=sys.stderr)
-                        continue
+                        known_rep = dict(others[0], how="time+lane")
+                    # Known or not, the track gets an alert file, a vetting
+                    # animation and a follow-up, so a reported comet is
+                    # measured and pictured like any other; only the log
+                    # kind and the notification differ.
                     stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
-                         "reports_checked": reps is not None, "other_instruments": others}, indent=1))
+                         "reports_checked": reps is not None, "other_instruments": others,
+                         "known": known_rep}, indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
                     except Exception as e:
                         print(f"{t:%H:%M} animation failed: {e}", file=sys.stderr)
-                    remember(c, f"alert: {stem.name}")
-                    log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
-                        reports_checked=reps is not None, others=others)
+                    if known_rep:
+                        remember(c, f"reported: {who(known_rep)}")
+                        log("reported", ch, now_utc, report=who(known_rep), how=known_rep["how"],
+                            known=known_rep, others=others, alert=str(stem.with_suffix(".json")))
+                        print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) "
+                              f"already reported ({who(known_rep)}, by {known_rep['how']})", file=sys.stderr)
+                    else:
+                        remember(c, f"alert: {stem.name}")
+                        log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
+                            reports_checked=reps is not None, others=others)
+                        hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
+                            if others else ""
+                        print(f"ALERT {stem}{hint}", flush=True)
                     # follow it for a confirmed notification; start from what's
                     # measurable already
                     pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
-                                    "points": pts, "t": t, "x": c["x"], "y": c["y"],
+                                    "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
                                     "vx": c["vx"], "vy": c["vy"], "misses": 0})
-                    hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
-                        if others else ""
-                    print(f"ALERT {stem}{hint}", flush=True)
                     if args.notify:
                         try:
                             subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])
                         except OSError as e:
                             print(f"notify failed: {e}", file=sys.stderr)
+            try:
+                if reps_at is None or datetime.now(timezone.utc).replace(tzinfo=None) - reps_at >= STATUS_REPORTS_EVERY:
+                    reps = latest_reports() or reps
+                    reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                write_status(chains, pending, t, reps)
+            except Exception as e:
+                print(f"{t:%H:%M} status error: {e}", file=sys.stderr)
         if args.keep_days and (pruned is None or now - pruned >= PRUNE_EVERY):
             pruned = now
             try:

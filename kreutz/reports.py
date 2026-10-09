@@ -31,12 +31,18 @@ from zoneinfo import ZoneInfo
 from . import DATA
 
 LISTING = "https://sungrazer.nrl.navy.mil/index.php/plain-text-reports?page={}"
+REPORT = "https://sungrazer.nrl.navy.mil/report/{}"  # a report's own page: its id without underscores
 POLITE_S = 1.0
 
 EASTERN = ZoneInfo("America/New_York")
 
 _ID = re.compile(r"^report_[a-z]+_(\d{14})$")
 _POINT = re.compile(r"^(\d{1,2}):?(\d{2})\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$")
+
+
+def report_url(report_id):
+    """Where a report (e.g. report_jr_20261009074834) is on Sungrazer's site."""
+    return REPORT.format(report_id.replace("_", ""))
 
 
 def _fetch(page):
