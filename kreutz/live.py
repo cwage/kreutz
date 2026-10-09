@@ -333,7 +333,10 @@ def main():
                         break
             chains = grown + [[c] for k, c in enumerate(cands) if k not in used]
             done.add(t)
-            print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {len(chains)} open tracks",
+            longest = max(chains, key=len) if chains else None
+            tail = (f" (longest {len(longest)} windows, at {longest[-1]['x']:.0f},{longest[-1]['y']:.0f})"
+                    if longest else "")
+            print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {len(chains)} open tracks{tail}",
                   file=sys.stderr)
             try:
                 pending = follow_up(seq, last, pending, args.notify, args.render)
