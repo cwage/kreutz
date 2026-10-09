@@ -2,7 +2,7 @@
 July 2025 benchmark (scripts/benchmark.sh), run by hand when the detector
 changes."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -228,8 +228,12 @@ def test_pictures_lists_what_a_render_has(tmp_path):
     (d / "preview.gif").write_bytes(b"")
     (d / "style-soft" / "field.gif").write_bytes(b"")
     (d / "style-soft" / "still.png").write_bytes(b"")
+    import os
+    os.utime(d / "preview.gif", (1_000_000, 1_000_000))
+    os.utime(d / "style-soft" / "still.png", (1_000_000, 1_000_000))
+    os.utime(d / "style-soft" / "field.gif", (1_700_000_000, 1_700_000_000))  # a style rerun, preview untouched
     pics = live.pictures("x", tmp_path)
-    assert datetime.fromisoformat(pics.pop("made_utc")) > datetime(2026, 1, 1)
+    assert pics.pop("made_utc") == datetime.fromtimestamp(1_700_000_000, timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
     assert pics == {
         "preview": "../render/x/preview.gif",
         "styles": {"soft": {"field": "../render/x/style-soft/field.gif", "still": "../render/x/style-soft/still.png"}}}
