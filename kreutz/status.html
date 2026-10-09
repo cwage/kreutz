@@ -16,7 +16,8 @@
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
   @media (max-width: 480px) { .cards { grid-template-columns: 1fr; } }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-  .card img { display: block; max-width: 100%; border-radius: 4px; background: #000; margin-top: 8px; }
+  .card img { display: block; height: 160px; width: auto; max-width: 100%; border-radius: 4px;
+              background: #000; margin-top: 8px; }
   a { color: inherit; } .badge a { color: #000; }
   .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
            font-weight: 600; color: #000; margin: 0 6px 4px 0; max-width: 100%; box-sizing: border-box; }
