@@ -116,6 +116,10 @@ A comet somebody has already reported gets the same files, follow-up and
 pictures, logged as `reported` rather than `alert`; the notification for it
 is a single low-priority one at the confirmed stage.
 
+The watcher saves its working state (`data/live/state.json`) after every
+window and resumes from it on restart, so it doesn't re-search the span
+and an object being followed keeps being measured and rendered.
+
 After every window the watcher rewrites `data/live/status.json`: open chains,
 what's being followed and at which stage (candidate at three windows,
 confirmed at five frames), whether and by whom it's already reported, and

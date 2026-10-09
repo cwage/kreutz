@@ -200,6 +200,26 @@ def test_field_gif_levels_survive_shrinking():
     assert style.shrunk(small, 800)[1] == 1.0
 
 
+def test_state_round_trips_and_expires(tmp_path):
+    p = tmp_path / "state.json"
+    t0 = datetime(2026, 10, 9, 12, 0, 25)
+    done = {t0 - timedelta(minutes=15 * k) for k in range(60)}  # 15 h of windows
+    pend = {"alert": "/data/live/alerts/a.json", "track": [{"time": "2026-10-09T11:30:25", "x": 1.0}],
+            "points": [(t0, np.float32(1893.5), np.float64(1219.25), np.float32(6.5))], "t": t0,
+            "x": 1893.5, "y": 1219.25, "vx": -9.0, "vy": -2.0, "misses": 0, "known": None, "others": [],
+            "render_proc": object(), "since_render": 2, "confirmed": True}
+    span = timedelta(hours=13)
+    live.save_state(done, [[{"x": 1.0}]], [pend], span, p)
+    d2, chains, pending = live.load_state(t0 + timedelta(minutes=30), span, p)
+    assert len(d2) == 53 and max(d2) == t0 and min(d2) == t0 - span  # trimmed to the span
+    assert chains == [[{"x": 1.0}]]
+    f, = pending
+    assert f["t"] == t0 and f["points"] == [(t0, 1893.5, 1219.25, 6.5)]
+    assert "render_proc" not in f and f["since_render"] == 2 and f["confirmed"]
+    assert live.load_state(t0 + span + timedelta(minutes=1), span, p) == (set(), [], [])
+    assert live.load_state(t0, span, tmp_path / "none.json") == (set(), [], [])
+
+
 def test_pictures_lists_what_a_render_has(tmp_path):
     assert live.pictures("none", tmp_path) is None
     d = tmp_path / "x"
