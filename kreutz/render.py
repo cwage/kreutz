@@ -189,9 +189,21 @@ def write_fits(path, seq, track, cubes, origin):
     fits.HDUList(hdus).writeto(path, overwrite=True)
 
 
+def preview_limits(crop_sub):
+    """One linear scale for all frames, taken from a typical frame: the
+    median over frames of each frame's 1st and 99.7th percentiles. A few
+    eclipse-flash frames, saturated white, would otherwise set the top of
+    the scale and crush every normal frame to black; this way they clip
+    instead."""
+    per = np.array([np.nanpercentile(plane, [1, 99.7]) for plane in crop_sub
+                    if np.isfinite(plane).any()])
+    lo, hi = np.median(per, axis=0)
+    return lo, hi
+
+
 def preview(crop_sub, times, path):
     """Linear stretch of the subtracted crops, one scale for all frames."""
-    lo, hi = np.nanpercentile(crop_sub, [1, 99.7])
+    lo, hi = preview_limits(crop_sub)
     frames = []
     for plane, t in zip(crop_sub, times):
         a = np.clip((np.nan_to_num(plane, nan=lo) - lo) / (hi - lo + 1e-30) * 255, 0, 255)

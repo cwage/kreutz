@@ -87,7 +87,7 @@ function card(f, s) {
   const stage = f.stage === 'confirmed'
     ? `<span class="badge confirmed">confirmed, ${f.points} frames</span>`
     : `<span class="badge candidate">candidate, ${f.points}/5 frames</span>`;
-  const pic = f.pictures ? bust(f.pictures.preview, s.updated_utc) : bust(f.gif, f.first);
+  const pic = f.pictures ? bust(f.pictures.preview, f.pictures.made_utc) : bust(f.gif, f.first);
   const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
   return `<div class="card">
     <div>${stage}${reportBadge(f.report)}</div>
@@ -123,8 +123,9 @@ function row(hist) {
               : last.kind === 'ended' ? ` after ${last.frames} frames` : '';
   const timeline = hist.map(r => `${LABEL[r.kind] || r.kind} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
   const pic = last.pictures ? last.pictures.preview : last.gif;
+  const stamp = last.pictures ? last.pictures.made_utc : last.decided_utc;
   return `<div class="row">
-    ${pic ? `<img src="${bust(pic, last.decided_utc)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
+    ${pic ? `<img src="${bust(pic, stamp)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
     <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${LABEL[last.kind] || last.kind}</span>${report}${extra}
       <div class="meta">${timeline} UTC (${ago(last.decided_utc)}) · seen ${hhmm(first.first)} → ${hhmm(last.last)}
         at ${last.x.toFixed(0)},${last.y.toFixed(0)}${last.name ? ` · ${esc(last.name)}` : ''}</div>
@@ -184,8 +185,8 @@ async function refresh() {
     return;
   }
   objects = {};
-  for (const f of s.following) objects[f.name] = {...f, stamp: s.updated_utc};
-  for (const r of s.recent) if (r.name && !objects[r.name]) objects[r.name] = {...r, stamp: r.decided_utc};
+  for (const f of s.following) objects[f.name] = {...f, stamp: f.pictures ? f.pictures.made_utc : s.updated_utc};
+  for (const r of s.recent) if (r.name && !objects[r.name]) objects[r.name] = {...r, stamp: r.pictures ? r.pictures.made_utc : r.decided_utc};
   const stale = (Date.now() - Date.parse(s.updated_utc + 'Z')) > 45 * 60000;
   document.getElementById('meta').innerHTML =
     `window ${hhmm(s.window_utc)} · updated ${ago(s.updated_utc)}${stale ? ' <b>(stale: is the watcher running?)</b>' : ''}
