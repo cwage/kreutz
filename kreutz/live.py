@@ -510,6 +510,12 @@ def main():
     if done:
         print(f"resumed: {len(done)} windows searched through {max(done):%Y-%m-%d %H:%M}, "
               f"{len(chains)} open tracks, {len(pending)} follow-ups", file=sys.stderr)
+
+    def checkpoint(t):
+        try:
+            save_state(done, chains, pending, history + timedelta(hours=2))
+        except Exception as e:  # disk trouble must not take the watcher down
+            print(f"{t:%H:%M} state error: {e}", file=sys.stderr)
     field = None  # the Kreutz lane, built once a frame shape is known
     pruned = None  # when prune last ran
     reps, reps_at = None, None  # Sungrazer's latest reports, for the status page's matches
@@ -534,6 +540,7 @@ def main():
             except ValueError as e:
                 print(f"{t:%Y-%m-%d %H:%M}: skipped ({e})", file=sys.stderr)
                 done.add(t)
+                checkpoint(t)
                 continue
             for c in cands:
                 c["time"] = t.isoformat()
@@ -630,10 +637,7 @@ def main():
                 write_status(chains, pending, t, reps)
             except Exception as e:
                 print(f"{t:%H:%M} status error: {e}", file=sys.stderr)
-            try:
-                save_state(done, chains, pending, history + timedelta(hours=2))
-            except Exception as e:
-                print(f"{t:%H:%M} state error: {e}", file=sys.stderr)
+            checkpoint(t)
         if args.keep_days and (pruned is None or now - pruned >= PRUNE_EVERY):
             pruned = now
             try:
