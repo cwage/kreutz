@@ -106,3 +106,11 @@ def test_prune_keeps_days_not_wholly_past_the_cutoff(tmp_path):
         assert sorted(p.name for p in (root / "2026" / "10").iterdir()) == ["05", "06", "07"]
         assert not (root / "2026" / "09").exists()  # emptied month removed
         assert (root / "notes").exists()
+
+
+def test_open_tracks_names_the_longest_chain():
+    assert live.open_tracks([]) == "0 open tracks"
+    blip = [{"x": 100.4, "y": 200.6}]
+    comet = [{"x": 1876.0, "y": 1215.0}, {"x": 1868.2, "y": 1223.1}, {"x": 1860.0, "y": 1231.0}]
+    assert live.open_tracks([blip]) == "1 open tracks (longest 1 windows, at 100,201)"
+    assert live.open_tracks([blip, comet]) == "2 open tracks (longest 3 windows, at 1860,1231)"
