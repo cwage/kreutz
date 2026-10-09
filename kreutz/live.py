@@ -17,6 +17,12 @@ faded) is appended to data/live/log.jsonl with the wall-clock time it was
 decided, which is what score.py turns into a table of leads and lags
 against the reports.
 
+data/live/state.json is rewritten after every window too: the windows
+searched, the open chains and the follow-ups. A restart loads it and
+carries on from the last window instead of re-searching the whole span,
+and an object being followed keeps being measured and rendered. State
+older than the span is ignored, so a long-stopped watcher starts clean.
+
 data/live/status.json is rewritten after every window: open chains,
 objects being followed with their stage (candidate at three windows,
 confirmed at five frames) and whether and by whom they're already
@@ -336,6 +342,42 @@ def animation(seq, track, path):
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=400, loop=0)
 
 
+STATE = LIVE / "state.json"
+
+
+def save_state(done, chains, pending, span, path=STATE):
+    """The watcher's working state, for a restart: the windows searched
+    within `span` of the newest, the open chains, and the follow-ups (a
+    render's process handle is dropped)."""
+    if not done:
+        return
+    newest = max(done)
+    d = {"done": sorted(t.isoformat() for t in done if newest - t <= span),
+         "chains": chains,
+         "pending": [{k: v for k, v in f.items() if k != "render_proc"}
+                     | {"t": f["t"].isoformat(),
+                        "points": [[t.isoformat(), float(x), float(y), float(s)] for t, x, y, s in f["points"]]}
+                     for f in pending]}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(path)
+
+
+def load_state(now, span, path=STATE):
+    """(done, chains, pending) as saved, or empty when there's no state or
+    its newest window is more than `span` before `now`."""
+    if not path.exists():
+        return set(), [], []
+    d = json.loads(path.read_text())
+    done = {datetime.fromisoformat(t) for t in d["done"]}
+    if not done or now - max(done) > span:
+        return set(), [], []
+    pending = [f | {"t": datetime.fromisoformat(f["t"]),
+                    "points": [(datetime.fromisoformat(t), x, y, s) for t, x, y, s in f["points"]]}
+               for f in d["pending"]]
+    return done, d["chains"], pending
+
+
 STATUS_RECENT = 20  # decisions shown on the status page
 STATUS_REPORTS_EVERY = timedelta(hours=1)  # how often the page's after-the-fact matches refresh
 
@@ -461,9 +503,13 @@ def main():
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
     shutil.copy(Path(__file__).with_name("status.html"), LIVE / "status.html")
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
-    done = set()
-    chains = []  # open tracks, as in evaluate.tracks
-    pending = []  # alerted objects still being followed for a confirmed notification
+    # done: windows searched; chains: open tracks, as in evaluate.tracks;
+    # pending: alerted objects still being followed. Resumed from the last
+    # save when it's recent enough to matter.
+    done, chains, pending = load_state(datetime.now(timezone.utc).replace(tzinfo=None), history + timedelta(hours=2))
+    if done:
+        print(f"resumed: {len(done)} windows searched through {max(done):%Y-%m-%d %H:%M}, "
+              f"{len(chains)} open tracks, {len(pending)} follow-ups", file=sys.stderr)
     field = None  # the Kreutz lane, built once a frame shape is known
     pruned = None  # when prune last ran
     reps, reps_at = None, None  # Sungrazer's latest reports, for the status page's matches
@@ -584,6 +630,10 @@ def main():
                 write_status(chains, pending, t, reps)
             except Exception as e:
                 print(f"{t:%H:%M} status error: {e}", file=sys.stderr)
+            try:
+                save_state(done, chains, pending, history + timedelta(hours=2))
+            except Exception as e:
+                print(f"{t:%H:%M} state error: {e}", file=sys.stderr)
         if args.keep_days and (pruned is None or now - pruned >= PRUNE_EVERY):
             pruned = now
             try:
