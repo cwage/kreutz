@@ -105,11 +105,17 @@ def coarser(img8, levels):
     return (v * 255 // (256 - step)).astype(np.uint8)
 
 
-def save_gif(frames, path, max_px=0):
-    w, h = frames[0].size
-    if max_px and max(w, h) > max_px:
-        k = max_px / max(w, h)
-        frames = [f.resize((round(w * k), round(h * k)), Image.LANCZOS) for f in frames]
+def shrunk(img8, max_px):
+    """img8 scaled so its long side is at most max_px (0: as is), and the
+    scale factor applied."""
+    h, w = img8.shape
+    if not max_px or max(h, w) <= max_px:
+        return img8, 1.0
+    k = max_px / max(h, w)
+    return np.array(Image.fromarray(img8).resize((round(w * k), round(h * k)), Image.LANCZOS)), k
+
+
+def save_gif(frames, path):
     if frames[0].mode == "RGB":
         frames = [f.quantize(256) for f in frames]
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=DURATION, loop=0)
@@ -147,24 +153,28 @@ def render(src, preset, gif_max=GIF_MAX):
         crop_frames.append(im)
         f8 = to8(field_p[k], lo, hi, p["stretch"])
 
-        def field_image(f8):
+        def field_image(f8, scale=1.0):
             im = toned(f8, p["tint"])
             d = ImageDraw.Draw(im)
             if p["ring"]:
                 # report (x, y) -> field array (row, col) -> flipped display row
-                rr = f8.shape[0] - 1 - ((hdr["NFULLROW"] - 1 - ys[k]) - r0)
-                cc = xs[k] - c0
-                d.ellipse([cc - 12, rr - 12, cc + 12, rr + 12], outline=label)
+                rr = (field_p.shape[1] - 1 - ((hdr["NFULLROW"] - 1 - ys[k]) - r0)) * scale
+                cc = (xs[k] - c0) * scale
+                rad = 12 * scale
+                d.ellipse([cc - rad, rr - rad, cc + rad, rr + rad], outline=label)
             d.text((4, 2), tag, fill=label)
             return im
 
         field_frames.append(field_image(f8))
-        field_gif.append(field_image(coarser(f8, GIF_LEVELS)))
+        # the GIF frame: shrunk first, then fewer levels, so the resampling
+        # doesn't put the levels back
+        small, scale = shrunk(f8, gif_max)
+        field_gif.append(field_image(coarser(small, GIF_LEVELS), scale))
     for k, (a, b) in enumerate(zip(crop_frames, field_frames)):
         a.save(out / "crop" / f"{k:03d}.png")
         b.save(out / "field" / f"{k:03d}.png")
     save_gif(crop_frames, out / "crop.gif")
-    save_gif(field_gif, out / "field.gif", gif_max)
+    save_gif(field_gif, out / "field.gif")
     slo, shi = limits(stack_p, p)
     s = np.kron(to8(stack_p, slo, shi, p["stretch"]), np.ones((p["scale"], p["scale"]), np.uint8))
     im = toned(s, p["tint"])

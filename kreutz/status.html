@@ -26,6 +26,7 @@
   code { color: var(--fg); background: #000; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
   .empty { color: var(--dim); font-style: italic; }
   .card img, .row img { cursor: zoom-in; }
+  img[tabindex]:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
   dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
            padding: 12px; max-width: calc(100vw - 32px); }
   dialog::backdrop { background: rgba(0, 0, 0, .8); }
@@ -78,6 +79,9 @@ const reportBadge = k => {
   return `<span class="badge known">${link(k, `${text}${how ? ` (${esc(how)})` : ''}`)}</span>`;
 };
 const bust = (p, iso) => p ? `${p}?${encodeURIComponent(iso || '')}` : null;
+// a thumbnail that opens the lightbox, by mouse or by Enter/Space
+const opener = name => `role="button" tabindex="0" onclick="openBox('${esc(name)}')" `
+  + `onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBox('${esc(name)}'); }"`;
 
 function card(f, s) {
   const stage = f.stage === 'confirmed'
@@ -92,7 +96,7 @@ function card(f, s) {
       ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
       ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}</div>
     <div class="meta"><code>docker compose run --rm kreutz kreutz.report /data/live/${esc(f.alert)}</code></div>
-    <img src="${pic}" alt="${what}" title="${what}" loading="lazy" onclick="openBox('${esc(f.name)}')">
+    <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f.name)}>
   </div>`;
 }
 
@@ -120,7 +124,7 @@ function row(hist) {
   const timeline = hist.map(r => `${LABEL[r.kind] || r.kind} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
   const pic = last.pictures ? last.pictures.preview : last.gif;
   return `<div class="row">
-    ${pic ? `<img src="${bust(pic, last.decided_utc)}" alt="" loading="lazy" onclick="openBox('${esc(last.name)}')">` : ''}
+    ${pic ? `<img src="${bust(pic, last.decided_utc)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
     <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${LABEL[last.kind] || last.kind}</span>${report}${extra}
       <div class="meta">${timeline} UTC (${ago(last.decided_utc)}) · seen ${hhmm(first.first)} → ${hhmm(last.last)}
         at ${last.x.toFixed(0)},${last.y.toFixed(0)}${last.name ? ` · ${esc(last.name)}` : ''}</div>

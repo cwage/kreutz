@@ -182,6 +182,24 @@ def test_notify_is_quiet_about_known_comets():
     assert (title, prio) == ("kreutz: CONFIRMED, report ready", "urgent")
 
 
+def test_seen_extends_the_track_to_the_last_measurement():
+    f = {"track": [{"time": "2026-10-08T22:15:25", "x": 1913.0, "y": 1225.0, "vx": -8.0, "vy": 2.0}],
+         "points": [(datetime(2026, 10, 9, 3, 0, 25), 1760.0, 1263.0, 5.0)], "vx": -8.1, "vy": 2.1}
+    s = live.seen(f)
+    assert s[0] is f["track"][0] and s[-1]["time"] == "2026-10-09T03:00:25" and s[-1]["x"] == 1760.0
+    assert live.seen({"track": f["track"], "points": [], "vx": 0, "vy": 0}) == f["track"]
+
+
+def test_field_gif_levels_survive_shrinking():
+    from kreutz import style
+    rng = np.random.default_rng(0)
+    big = rng.normal(60, 15, (900, 1200)).clip(0, 255).astype(np.uint8)
+    small, k = style.shrunk(big, 800)
+    assert small.shape == (600, 800) and abs(k - 2 / 3) < 1e-9
+    assert len(np.unique(style.coarser(small, 64))) <= 64
+    assert style.shrunk(small, 800)[1] == 1.0
+
+
 def test_pictures_lists_what_a_render_has(tmp_path):
     assert live.pictures("none", tmp_path) is None
     d = tmp_path / "x"

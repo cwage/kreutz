@@ -238,6 +238,15 @@ def rendering(f):
     return f.get("render_proc") is not None and f["render_proc"].poll() is None
 
 
+def seen(f):
+    """A follow-up's track extended to its latest measured point, so a log
+    record's first/last and position cover the passage, not just the alert."""
+    if not f["points"]:
+        return f["track"]
+    t, x, y, _ = f["points"][-1]
+    return f["track"] + [{"time": t.isoformat(), "x": x, "y": y, "vx": f["vx"], "vy": f["vy"]}]
+
+
 def follow_up(seq, last, pending, notify, render=False):
     """Keep measuring alerted objects in each new frame. Once one has been
     seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
@@ -260,11 +269,11 @@ def follow_up(seq, last, pending, notify, render=False):
             if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
                 keep.append(f)
             elif f.get("confirmed"):
-                log("ended", f["track"], now, alert=f["alert"], frames=len(f["points"]))
+                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]))
                 if render and not rendering(f):
                     start_render(f)  # the whole passage
             else:
-                log("faded", f["track"], now, alert=f["alert"])
+                log("faded", seen(f), now, alert=f["alert"])
             continue
         f["misses"] = 0
         f["points"].append(pts[-1])
@@ -280,7 +289,7 @@ def follow_up(seq, last, pending, notify, render=False):
                        "frames": len(f["points"]), "other_instruments": f["others"],
                        "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds")},
                       open(path, "w"), indent=1)
-            log("confirmed", f["track"], now, alert=f["alert"], frames=len(f["points"]), note=note,
+            log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
                 known=f.get("known"))
             print(f"CONFIRMED {path} ({len(f['points'])} frames, {note})", flush=True)
             if notify:
