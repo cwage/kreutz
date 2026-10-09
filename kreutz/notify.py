@@ -11,6 +11,9 @@ NTFY_TOPIC (docker-compose.yml passes both through from the host). The
 message is terse on purpose: nothing can be done from a phone, so it says
 what fired and gives the kreutz.report command to run at a computer,
 which measures the object and prints the block for Sungrazer's form.
+A comet somebody has already reported (the file's "known") gets a single
+low-priority message when it's confirmed, and nothing at the candidate
+stage.
 """
 
 import json
@@ -29,6 +32,35 @@ def _send(server, topic, title, lines, priority, tags):
         print(f"notified {server}/{topic}: HTTP {r.status}")
 
 
+def compose(d, name):
+    """(title, lines, priority, tags) for an alert or confirmed file's
+    contents, or None when nothing should be sent: a comet somebody has
+    already reported gets one quiet message, at the confirmed stage."""
+    track = d["track"] if isinstance(d, dict) else d
+    c = track[-1]
+    others = d.get("other_instruments", []) if isinstance(d, dict) else []
+    known = d.get("known") if isinstance(d, dict) else None
+    confirmed = isinstance(d, dict) and d.get("kind") == "confirmed"
+    cmd = f"docker compose run --rm kreutz kreutz.report /data/live/alerts/{name}"
+    if known:
+        if not confirmed:
+            return None
+        posted = known["posted_utc"].replace("T", " ")[:16]
+        return (f"kreutz: known comet, {known['reporter']}'s ({known['telescope']})",
+                [f"Reported {posted} UTC, matched by {known['how']}; held {d['frames']} frames, {d['note']}.",
+                 "Measure it anyway:", cmd], "low", "comet")
+    hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
+    if confirmed:
+        return ("kreutz: CONFIRMED, report ready" if not others else "kreutz: confirmed, likely known",
+                [f"Held {d['frames']} frames, {d['note']}; {hint}.", "Measure and get the form block:", cmd],
+                "urgent" if not others else "default", "comet,clipboard")
+    speed = (c["vx"] ** 2 + c["vy"] ** 2) ** 0.5
+    return ("kreutz: candidate, UNREPORTED" if not others else "kreutz: candidate, likely known",
+            [f"Mover at ({c['x']:.0f},{c['y']:.0f}) {speed:.1f} px/frame, seen since "
+             f"{track[0]['time'][11:16]} UTC; {hint}.", "Vet and measure:", cmd],
+            "high" if not others else "default", "comet")
+
+
 def post(alert_path):
     server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
     topic = os.environ.get("NTFY_TOPIC")
@@ -36,23 +68,11 @@ def post(alert_path):
         print("NTFY_TOPIC not set; not notifying", file=sys.stderr)
         return
     p = Path(alert_path)
-    d = json.load(open(p))
-    track = d["track"] if isinstance(d, dict) else d
-    c = track[-1]
-    others = d.get("other_instruments", []) if isinstance(d, dict) else []
-    known = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
-    cmd = f"docker compose run --rm kreutz kreutz.report /data/live/alerts/{p.name}"
-    if isinstance(d, dict) and d.get("kind") == "confirmed":
-        lines = [f"Held {d['frames']} frames, {d['note']}; {known}.", "Measure and get the form block:", cmd]
-        title = "kreutz: CONFIRMED, report ready" if not others else "kreutz: confirmed, likely known"
-        _send(server, topic, title, lines, "urgent" if not others else "default", "comet,clipboard")
+    msg = compose(json.load(open(p)), p.name)
+    if msg is None:
+        print(f"{p.name}: known comet at the candidate stage; not notifying")
         return
-    speed = (c["vx"] ** 2 + c["vy"] ** 2) ** 0.5
-    lines = [f"Mover at ({c['x']:.0f},{c['y']:.0f}) {speed:.1f} px/frame, seen since "
-             f"{track[0]['time'][11:16]} UTC; {known}.",
-             "Vet and measure:", cmd]
-    title = "kreutz: candidate, UNREPORTED" if not others else "kreutz: candidate, likely known"
-    _send(server, topic, title, lines, "high" if not others else "default", "comet")
+    _send(server, topic, *msg)
 
 
 def main():

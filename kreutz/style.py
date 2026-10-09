@@ -5,8 +5,12 @@
 Writes data/render/<name>/style-<preset>/: crop.gif (the object held still,
 stars sliding past), field.gif (the region it crosses, object ringed if
 the preset says so), crop/ and field/ as numbered PNG frames, still.png
-(the STACK plane). Full resolution, 8-bit grayscale; shrink or convert
-afterwards, e.g.
+(the STACK plane). 8-bit grayscale. The PNG frames and still are full
+resolution; field.gif is made to be looked at rather than kept: at most
+GIF_MAX px on its long side (--gif-max, 0 for full size) and GIF_LEVELS
+gray levels, since a whole crossing's field is most of the frame and a
+GIF of it at full size runs to tens of megabytes (the noise dithers the
+coarser levels away). For anything better than a GIF, convert the frames:
 
     ffmpeg -framerate 8 -i field/%03d.png -vf scale=iw/2:-2 -pix_fmt yuv420p field.mp4
 
@@ -89,13 +93,29 @@ def toned(img8, tint):
     return Image.fromarray(rgb.astype(np.uint8))
 
 
-def save_gif(frames, path):
+GIF_MAX = 800  # field.gif's long side, px
+GIF_LEVELS = 64  # gray levels in field.gif; LZW likes fewer, the eye can't tell on a noisy field
+
+
+def coarser(img8, levels):
+    """img8 with its 256 gray levels reduced to `levels`, evenly spaced,
+    the ends kept so stars stay as bright as they were."""
+    step = 256 // levels
+    v = img8.astype(np.int32) // step * step
+    return (v * 255 // (256 - step)).astype(np.uint8)
+
+
+def save_gif(frames, path, max_px=0):
+    w, h = frames[0].size
+    if max_px and max(w, h) > max_px:
+        k = max_px / max(w, h)
+        frames = [f.resize((round(w * k), round(h * k)), Image.LANCZOS) for f in frames]
     if frames[0].mode == "RGB":
         frames = [f.quantize(256) for f in frames]
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=DURATION, loop=0)
 
 
-def render(src, preset):
+def render(src, preset, gif_max=GIF_MAX):
     p = PRESETS[preset]
     with fits.open(src / "cutouts.fits") as h:
         hdr = h[0].header
@@ -118,7 +138,7 @@ def render(src, preset):
         (out / sub).mkdir(parents=True, exist_ok=True)
         for old in (out / sub).glob("*.png"):  # a re-render may have fewer frames
             old.unlink()
-    crop_frames, field_frames = [], []
+    crop_frames, field_frames, field_gif = [], [], []
     for k in range(len(times)):
         tag = f"{times[k][:10]} {times[k][11:16]} UTC"
         c = np.kron(to8(crop_p[k], lo, hi, p["stretch"]), np.ones((p["scale"], p["scale"]), np.uint8))
@@ -126,20 +146,25 @@ def render(src, preset):
         ImageDraw.Draw(im).text((4, 2), tag, fill=label)
         crop_frames.append(im)
         f8 = to8(field_p[k], lo, hi, p["stretch"])
-        im = toned(f8, p["tint"])
-        d = ImageDraw.Draw(im)
-        if p["ring"]:
-            # report (x, y) -> field array (row, col) -> flipped display row
-            rr = f8.shape[0] - 1 - ((hdr["NFULLROW"] - 1 - ys[k]) - r0)
-            cc = xs[k] - c0
-            d.ellipse([cc - 12, rr - 12, cc + 12, rr + 12], outline=label)
-        d.text((4, 2), tag, fill=label)
-        field_frames.append(im)
+
+        def field_image(f8):
+            im = toned(f8, p["tint"])
+            d = ImageDraw.Draw(im)
+            if p["ring"]:
+                # report (x, y) -> field array (row, col) -> flipped display row
+                rr = f8.shape[0] - 1 - ((hdr["NFULLROW"] - 1 - ys[k]) - r0)
+                cc = xs[k] - c0
+                d.ellipse([cc - 12, rr - 12, cc + 12, rr + 12], outline=label)
+            d.text((4, 2), tag, fill=label)
+            return im
+
+        field_frames.append(field_image(f8))
+        field_gif.append(field_image(coarser(f8, GIF_LEVELS)))
     for k, (a, b) in enumerate(zip(crop_frames, field_frames)):
         a.save(out / "crop" / f"{k:03d}.png")
         b.save(out / "field" / f"{k:03d}.png")
     save_gif(crop_frames, out / "crop.gif")
-    save_gif(field_frames, out / "field.gif")
+    save_gif(field_gif, out / "field.gif", gif_max)
     slo, shi = limits(stack_p, p)
     s = np.kron(to8(stack_p, slo, shi, p["stretch"]), np.ones((p["scale"], p["scale"]), np.uint8))
     im = toned(s, p["tint"])
@@ -154,9 +179,11 @@ def main():
     ap.add_argument("render", type=Path, help="a data/render/<name> directory")
     ap.add_argument("--preset", default="soft", choices=sorted(PRESETS))
     ap.add_argument("--all", action="store_true", help="every preset")
+    ap.add_argument("--gif-max", type=int, default=GIF_MAX,
+                    help=f"shrink field.gif to this many px on its long side (default {GIF_MAX}; 0: full size)")
     args = ap.parse_args()
     for preset in (sorted(PRESETS) if args.all else [args.preset]):
-        render(args.render, preset)
+        render(args.render, preset, args.gif_max)
 
 
 if __name__ == "__main__":
