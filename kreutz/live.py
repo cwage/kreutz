@@ -261,6 +261,17 @@ def animation(seq, track, path):
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=400, loop=0)
 
 
+def open_tracks(chains):
+    """The open-tracks part of the per-window log line: how many chains
+    are open and, if any, how long the longest is and where it was last
+    seen, so one object persisting reads differently from blips."""
+    if not chains:
+        return "0 open tracks"
+    longest = max(chains, key=len)
+    return (f"{len(chains)} open tracks (longest {len(longest)} windows, "
+            f"at {longest[-1]['x']:.0f},{longest[-1]['y']:.0f})")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--threshold", type=float, default=5.5)
@@ -333,11 +344,7 @@ def main():
                         break
             chains = grown + [[c] for k, c in enumerate(cands) if k not in used]
             done.add(t)
-            longest = max(chains, key=len) if chains else None
-            tail = (f" (longest {len(longest)} windows, at {longest[-1]['x']:.0f},{longest[-1]['y']:.0f})"
-                    if longest else "")
-            print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {len(chains)} open tracks{tail}",
-                  file=sys.stderr)
+            print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {open_tracks(chains)}", file=sys.stderr)
             try:
                 pending = follow_up(seq, last, pending, args.notify, args.render)
             except Exception as e:  # a follow-up must never take the watcher down
