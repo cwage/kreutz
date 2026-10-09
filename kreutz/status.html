@@ -13,11 +13,8 @@
   h2 { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em;
        margin: 24px 0 8px; }
   .meta { color: var(--dim); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
-  @media (max-width: 480px) { .cards { grid-template-columns: 1fr; } }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-  .card img { display: block; height: 160px; width: auto; max-width: 100%; border-radius: 4px;
-              background: #000; margin-top: 8px; }
+  .following .row { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+                    padding: 10px 12px; margin-bottom: 8px; }
   a { color: inherit; } .badge a { color: #000; }
   .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
            font-weight: 600; color: #000; margin: 0 6px 4px 0; max-width: 100%; box-sizing: border-box; }
@@ -28,7 +25,7 @@
   code { color: var(--fg); background: #000; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
   .cmd { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
   .empty { color: var(--dim); font-style: italic; }
-  .card img, .row img { cursor: zoom-in; }
+  .row img { cursor: zoom-in; }
   img[tabindex]:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
   dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
            padding: 12px; max-width: calc(100vw - 32px); }
@@ -47,7 +44,7 @@
 <div class="meta" id="meta">loading status.json…</div>
 
 <h2>Following</h2>
-<div class="cards" id="following"></div>
+<div class="following" id="following"></div>
 
 <h2>Recent decisions</h2>
 <div id="recent"></div>
@@ -86,21 +83,22 @@ const bust = (p, iso) => p ? `${p}?${encodeURIComponent(iso || '')}` : null;
 const opener = name => `role="button" tabindex="0" onclick="openBox('${esc(name)}')" `
   + `onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBox('${esc(name)}'); }"`;
 
+// A followed object: laid out like a decided one, picture left, text right.
 function card(f, s) {
   const stage = f.stage === 'confirmed'
     ? `<span class="badge confirmed">confirmed, ${f.points} frames</span>`
     : `<span class="badge candidate">candidate, ${f.points} frame${f.points === 1 ? '' : 's'} measured</span>`;
   const pic = f.pictures ? bust(f.pictures.preview, f.pictures.made_utc) : bust(f.gif, f.first);
   const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
-  return `<div class="card">
-    <div>${stage}${reportBadge(f.report)}</div>
-    <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
-      · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
-      ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
-      ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}</div>
-    <code class="cmd">docker compose run --rm kreutz kreutz.report /data/live/${esc(f.alert)}</code>
+  return `<div class="row">
     <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f.name)}>
-  </div>`;
+    <div>${stage}${reportBadge(f.report)}
+      <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
+        · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
+        ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
+        ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}</div>
+      <code class="cmd">docker compose run --rm kreutz kreutz.report /data/live/${esc(f.alert)}</code>
+    </div></div>`;
 }
 
 const LABEL = {alert: 'candidate', confirmed: 'confirmed', reported: 'already reported',
