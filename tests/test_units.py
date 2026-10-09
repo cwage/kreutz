@@ -2,7 +2,7 @@
 July 2025 benchmark (scripts/benchmark.sh), run by hand when the detector
 changes."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -228,6 +228,24 @@ def test_pictures_lists_what_a_render_has(tmp_path):
     (d / "preview.gif").write_bytes(b"")
     (d / "style-soft" / "field.gif").write_bytes(b"")
     (d / "style-soft" / "still.png").write_bytes(b"")
-    assert live.pictures("x", tmp_path) == {
+    import os
+    os.utime(d / "preview.gif", (1_000_000, 1_000_000))
+    os.utime(d / "style-soft" / "still.png", (1_000_000, 1_000_000))
+    os.utime(d / "style-soft" / "field.gif", (1_700_000_000, 1_700_000_000))  # a style rerun, preview untouched
+    pics = live.pictures("x", tmp_path)
+    assert pics.pop("made_utc") == datetime.fromtimestamp(1_700_000_000, timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+    assert pics == {
         "preview": "../render/x/preview.gif",
         "styles": {"soft": {"field": "../render/x/style-soft/field.gif", "still": "../render/x/style-soft/still.png"}}}
+
+
+def test_preview_scale_ignores_flash_frames():
+    from kreutz import render
+    rng = np.random.default_rng(1)
+    cube = rng.normal(0, 1, (20, 50, 50)).astype(np.float32)
+    cube[9:11] += 500  # two eclipse-flash frames
+    cube[0, :5, :5] = np.nan
+    lo, hi = render.preview_limits(cube)
+    assert -4 < lo < -1.5 and 1.5 < hi < 4  # the noise's own scale, not the flash's
+    naive_hi = np.nanpercentile(cube, 99.7)
+    assert naive_hi > 100

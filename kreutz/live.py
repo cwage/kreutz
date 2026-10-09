@@ -390,11 +390,17 @@ def pictures(name, root=None):
     if not (d / "preview.gif").exists():
         return None
     out = {"preview": f"../render/{name}/preview.gif", "styles": {}}
+    files = [d / "preview.gif"]
     for sd in sorted(d.glob("style-*")):
         have = {k: f"../render/{name}/{sd.name}/{f}" for k, f in
                 (("crop", "crop.gif"), ("field", "field.gif"), ("still", "still.png")) if (sd / f).exists()}
         if have:
             out["styles"][sd.name[len("style-"):]] = have
+            files += [sd / f for f in ("crop.gif", "field.gif", "still.png") if (sd / f).exists()]
+    # the newest of them, so the page's cache-buster changes whenever any
+    # picture is remade (kreutz.style can rerun without touching the preview)
+    made = datetime.fromtimestamp(max(f.stat().st_mtime for f in files), timezone.utc).replace(tzinfo=None)
+    out["made_utc"] = made.isoformat(timespec="seconds")
     return out
 
 
