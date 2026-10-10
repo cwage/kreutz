@@ -135,10 +135,21 @@ deleted (about 1.6 GB a day otherwise accumulates); alerts, logs and renders
 are kept, and a pruned day comes back with `kreutz.fetch`. Frames share a
 directory with the archive fetcher, so use it only where nothing else keeps
 frames there.
-Kreutz reports from other coronagraphs can't be matched by position; a
-lane track while one of them has a Kreutz comet in view counts as that
-comet. `kreutz.score` later compares each alert with the reports that
-appeared and prints the lead or lag in minutes. Submitting a report is
+A CCOR-1 report claims a track that passes through its points, or along
+their path extrapolated for up to 12 h either way, so a morning report
+still claims the comet's track in the evening; a followed object is
+re-matched against the latest reports every window, since the report of
+a comet we're following usually arrives hours after our alert. Kreutz
+reports from other coronagraphs can't be matched by position; a lane
+track while one of them has a Kreutz comet in view counts as that comet,
+where "in view" allows a day before our first sighting for LASCO C3,
+which looks much farther out, and six hours for CCOR-2 and C2, which see
+roughly what CCOR-1 sees when it sees it. The search stacks frames and
+so holds a comet too faint for the follow-up's single-frame measurement;
+a frame where the search still chains a followed object counts as seen,
+and a chain that sits where a follow-up predicts its object is not
+alerted again. `kreutz.score` later compares each alert with the reports
+that appeared and prints the lead or lag in minutes. Submitting a report is
 always a person's job.
 
 ### A week at a time

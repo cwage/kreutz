@@ -207,24 +207,32 @@ def report_points(reports, day):
     return out
 
 
-OTHER_BEFORE = timedelta(hours=24)
+# How long before our first sighting another instrument's report of the
+# same comet can have been observed. LASCO C3 looks much farther out, so
+# it sees a Kreutz comet about a day before CCOR-1 does; CCOR-2 (at L1)
+# and C2 see roughly what CCOR-1 sees when it sees it, give or take a
+# few hours of field edge and reporting lag. A day for those would claim
+# yesterday's comet for today's track (it did, on 2026-10-10).
+OTHER_BEFORE = {"C3": timedelta(hours=24)}
+OTHER_BEFORE_DEFAULT = timedelta(hours=6)
 OTHER_AFTER = timedelta(hours=2)
 OTHER_KINDS = ("Potential Comet", "Additional Observations", "Known Comet Now Entering")
 
 
 def other_kreutz(reports, t_first, t_last):
     """Kreutz reports from instruments other than CCOR-1 whose observed
-    times (or, without points, posting time) fall within OTHER_BEFORE of
-    t_first to OTHER_AFTER of t_last. Their pixel coordinates can't be
+    times (or, without points, posting time) fall within that instrument's
+    OTHER_BEFORE of t_first to OTHER_AFTER of t_last. Their pixel coordinates can't be
     compared with ours, so this is matching by time; for a track in the
     Kreutz lane (lane.in_lane) that's nearly always the same object, since
     Kreutz comets arrive one at a time along one path."""
-    t0, t1 = t_first - OTHER_BEFORE, t_last + OTHER_AFTER
     out = []
     for r in reports or []:
         if r.get("group") != "Kreutz" or r.get("telescope") in (None, "CCOR1") \
                 or r.get("kind") not in OTHER_KINDS:
             continue
+        t0 = t_first - OTHER_BEFORE.get(r["telescope"], OTHER_BEFORE_DEFAULT)
+        t1 = t_last + OTHER_AFTER
         posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
         times = []
         for hhmm, _, _ in r["points"]:

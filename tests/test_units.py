@@ -120,7 +120,9 @@ def test_open_tracks_names_the_longest_chain():
 def test_status_stages_and_paths():
     pend = {"alert": "/data/live/alerts/20261008T2215_1913_1225.json", "misses": 1, "confirmed": True,
             "track": [{"time": "2026-10-08T21:45:25", "x": 1930.0, "y": 1220.0, "vx": -8.0, "vy": 2.0}],
-            "points": [None] * 6, "t": datetime(2026, 10, 8, 23, 0, 25), "x": 1890.0, "y": 1230.0,
+            "points": [(datetime(2026, 10, 8, 21, 45, 25) + timedelta(minutes=15 * i), 1930.0 - 8 * i, 1220.0 + 2 * i, 5.0)
+                       for i in range(6)],
+            "t": datetime(2026, 10, 8, 23, 0, 25), "x": 1890.0, "y": 1230.0,
             "vx": -8.0, "vy": 2.0, "known": None, "others": [{"reporter": "X"}]}
     recent = [{"kind": "reported", "decided_utc": "2026-10-09T12:16:12", "first": "2026-10-09T11:30:25",
                "last": "2026-10-09T12:00:25", "x": 1876.0, "y": 1215.0, "report": "Jiangao Ruan report_jr_20261009074834 (CCOR1)",
@@ -307,3 +309,73 @@ def test_gif_frames_keep_the_mark_color():
         style.stamp(g, "x", 255)
         r, gg, b = g.convert("RGB").getextrema()  # white-ish, not a red int-as-RGB
         assert r == gg == b and r[1] > 200
+
+
+def test_other_instrument_lookback_is_per_instrument():
+    def rep(tel, posted, hhmm):
+        return {"id": f"report_x_{posted}", "reporter": "X", "telescope": tel, "group": "Kreutz",
+                "kind": "Potential Comet", "posted_utc": posted[:4] + "-" + posted[4:6] + "-" + posted[6:8]
+                + "T" + posted[8:10] + ":" + posted[10:12] + ":00Z", "points": [[hhmm, 1.0, 2.0]]}
+    first, last = datetime(2026, 10, 10, 8, 0, 25), datetime(2026, 10, 10, 8, 30, 25)
+    yesterday_ccor2 = rep("CCOR2", "202610091206", "1030")  # Kaszczyk's, 21 h before: another comet
+    yesterday_c3 = rep("C3", "202610091206", "1030")  # C3 sees a Kreutz comet a day ahead of us
+    same_morning = rep("CCOR2", "202610101202", "0945")  # an hour after our last window
+    got = evaluate.other_kreutz([yesterday_ccor2, yesterday_c3, same_morning], first, last)
+    assert [o["telescope"] for o in got] == ["C3", "CCOR2"]
+    assert got[1]["posted_utc"].startswith("2026-10-10")
+
+
+def test_reported_by_extrapolates_along_the_report():
+    # Ruan's 2026-10-10 report, measured 09:30-10:00; our chain at 17:30-18:00
+    # is the same comet eight hours on, well past the measured span.
+    reps = [{"id": "report_jr_20261010062348", "reporter": "Jiangao Ruan", "telescope": "CCOR1", "group": "Kreutz",
+             "kind": "Potential Comet", "posted_utc": "2026-10-10T10:23:48Z",
+             "points": [["0930", 1849.0, 1198.0], ["0945", 1838.0, 1197.0], ["1000", 1828.0, 1194.0]]}]
+    chain = [{"time": "2026-10-10T17:30:25", "x": 1539.0, "y": 1119.0, "vx": -10.0, "vy": -2.5},
+             {"time": "2026-10-10T17:45:25", "x": 1530.0, "y": 1116.0, "vx": -10.0, "vy": -2.5},
+             {"time": "2026-10-10T18:00:25", "x": 1520.0, "y": 1113.0, "vx": -10.0, "vy": -2.5}]
+    k = live.reported_by(chain, datetime(2026, 10, 10, 18, 0, 25), reps)
+    assert k and k["id"] == "report_jr_20261010062348" and k["how"] == "position"
+    # additional observations of it, posted later, don't displace the discovery
+    more = dict(reps[0], id="report_jr_20261010100000", kind="Additional Observations",
+                posted_utc="2026-10-10T14:00:00Z", points=[["1230", 1736.0, 1171.0], ["1300", 1717.0, 1166.0]])
+    assert live.reported_by(chain, datetime(2026, 10, 10, 18, 0, 25), [more] + reps)["id"] == "report_jr_20261010062348"
+    elsewhere = [dict(c, y=c["y"] + 300) for c in chain]
+    assert live.reported_by(elsewhere, datetime(2026, 10, 10, 18, 0, 25), reps) is None
+
+
+def test_follow_up_counts_the_chain_when_the_frame_does_not(monkeypatch):
+    import types
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [])
+    t0 = datetime(2026, 10, 10, 8, 30, 25)
+    f = {"alert": "/data/live/alerts/x.json", "track": [], "others": [], "known": None, "points": [],
+         "t": t0, "x": 1883.0, "y": 1210.0, "vx": -9.0, "vy": -2.5, "misses": 0}
+    seq = types.SimpleNamespace(times=[t0, t0 + timedelta(minutes=15)])
+    on_track = [[{"time": seq.times[1].isoformat(), "x": 1874.0, "y": 1208.0, "vx": -9.0, "vy": -2.5, "score": 7.1}]]
+    keep = live.follow_up(seq, 1, [{**f, "points": []}], None, chains=on_track)
+    assert keep[0]["misses"] == 0 and len(keep[0]["points"]) == 1 and keep[0]["x"] == 1874.0
+    off_track = [[dict(on_track[0][0], y=1240.0)]]
+    keep = live.follow_up(seq, 1, [{**f, "points": []}], None, chains=off_track)
+    assert keep[0]["misses"] == 1 and keep[0]["points"] == []
+
+
+def test_followed_comet_is_not_alerted_again():
+    t0 = datetime(2026, 10, 10, 8, 30, 25)
+    pending = [{"t": t0, "x": 1883.0, "y": 1210.0, "vx": -9.0, "vy": -2.5}]
+    later = t0 + timedelta(hours=2)  # 8 frames on: predicted (1811, 1190), tolerance 23 px
+    assert live.followed({"x": 1820.0, "y": 1192.0}, later, pending)
+    assert not live.followed({"x": 1860.0, "y": 1192.0}, later, pending)
+    assert not live.followed({"x": 1811.0, "y": 1190.0}, t0 + timedelta(hours=4), pending)  # given up by then
+
+
+def test_best_report_prefers_a_position_match():
+    guess = {"reporter": "Mikolaj Kaszczyk", "id": "report_mk_20261009080647", "telescope": "CCOR2",
+             "posted_utc": "2026-10-09T12:06:47Z", "kind": "Potential Comet", "how": "time+lane"}
+    reps = [{"id": "report_jr_20261010062348", "reporter": "Jiangao Ruan", "telescope": "CCOR1", "group": "Kreutz",
+             "kind": "Potential Comet", "posted_utc": "2026-10-10T10:23:48Z",
+             "points": [["0930", 1849.0, 1198.0], ["0945", 1838.0, 1197.0], ["1000", 1828.0, 1194.0]]}]
+    track = [{"time": "2026-10-10T17:30:25", "x": 1539.0, "y": 1119.0, "vx": -10.0, "vy": -2.5},
+             {"time": "2026-10-10T18:00:25", "x": 1520.0, "y": 1113.0, "vx": -10.0, "vy": -2.5}]
+    assert live.best_report(guess, track, reps)["reporter"] == "Jiangao Ruan"
+    assert live.best_report(guess, track, [])["reporter"] == "Mikolaj Kaszczyk"
+    assert live.best_report(None, track, reps)["how"] == "position"
