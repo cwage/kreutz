@@ -4,9 +4,11 @@
 
 Writes data/render/<name>/style-<preset>/: crop.gif (the object held still,
 stars sliding past), field.gif (the region it crosses, the object marked
-with a yellow crosshair if the preset says so), crop/ and field/ as numbered PNG frames, still.png
-(the STACK plane). 8-bit grayscale. The PNG frames and still are full
-resolution; field.gif is made to be looked at rather than kept: at most
+with a yellow crosshair if the preset says so), crop/ and field/ as
+numbered PNG frames, still.png (the STACK plane). Pictures are 8-bit
+gray from the data, as RGB where a tint or the mark colors them (field
+frames of a marking preset, everything of a tinted one). The PNG frames
+and still are full resolution; field.gif is made to be looked at rather than kept: at most
 GIF_MAX px on its long side (--gif-max, 0 for full size) and GIF_LEVELS
 gray levels, since a whole crossing's field is most of the frame and a
 GIF of it at full size runs to tens of megabytes (the noise dithers the
