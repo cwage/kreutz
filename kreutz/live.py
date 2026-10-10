@@ -676,6 +676,16 @@ def main():
             chains = grown + [[c] for k, c in enumerate(cands) if k not in used]
             done.add(t)
             print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {open_tracks(chains)}", file=sys.stderr)
+            # The latest reports first, so a confirmation this window is
+            # filed and announced under the report that fits it, not as
+            # unreported because the report arrived since the alert.
+            try:
+                if reps_at is None or datetime.now(timezone.utc).replace(tzinfo=None) - reps_at >= STATUS_REPORTS_EVERY:
+                    reps = latest_reports() or reps
+                    reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                recheck(pending, t, reps)
+            except Exception as e:
+                print(f"{t:%H:%M} reports error: {e}", file=sys.stderr)
             try:
                 pending = follow_up(seq, last, pending, args.notify, args.render, chains)
             except Exception as e:  # a follow-up must never take the watcher down
@@ -739,10 +749,6 @@ def main():
                         except OSError as e:
                             print(f"notify failed: {e}", file=sys.stderr)
             try:
-                if reps_at is None or datetime.now(timezone.utc).replace(tzinfo=None) - reps_at >= STATUS_REPORTS_EVERY:
-                    reps = latest_reports() or reps
-                    reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                recheck(pending, t, reps)
                 write_status(chains, pending, t, reps)
             except Exception as e:
                 print(f"{t:%H:%M} status error: {e}", file=sys.stderr)
