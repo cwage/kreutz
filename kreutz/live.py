@@ -72,6 +72,7 @@ from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, measure
 from .search import MAX_MISSING, consistent, search
+from .shortlist import FRAME_ROWS, _known_by_position
 from .vet import follow
 
 FEED = "https://services.swpc.noaa.gov/products/ccor1/fits/"
@@ -174,15 +175,46 @@ def latest_reports():
         return None  # the site hiccups; treat as unknown and let a human check
 
 
+_FIELD = []
+
+
+def lane_field():
+    """The Kreutz lane's flow field, built once."""
+    if not _FIELD:
+        _FIELD.append(build_field((FRAME_ROWS, 2048)))
+    return _FIELD[0]
+
+
 def reported_by(track, t, reps):
     """The CCOR-1 report this track matches by position, if any, as
-    {reporter, id, telescope, posted_utc, kind, how}."""
+    {reporter, id, telescope, posted_utc, kind, how}. A match is the
+    track passing through the report's points while they were measured,
+    or along their path extrapolated as the archive's shortlist does:
+    straight ahead for up to 12 h and back along the lane for up to 12 h,
+    with a tolerance that grows with the distance from the measured span.
+    So a report measured in the morning still claims the same comet's
+    track in the evening. Of several that fit (a comet gets additional
+    observations), the earliest posted: that's who found it."""
     track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
-    for r, pts, posted in report_points(reps, t.date()):
-        if matches(track, pts):
-            return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} \
-                | {"how": "position"}
-    return None
+    fits = [r for r, pts, posted in report_points(reps, t.date())
+            if matches(track, pts) or (len(pts) >= 2
+                                       and _known_by_position(track, [(r, pts)], lane_field()) is not None)]
+    if not fits:
+        return None
+    r = min(fits, key=lambda r: r["posted_utc"])
+    return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} | {"how": "position"}
+
+
+def recheck(pending, t, reps):
+    """Follow-ups not yet matched to a CCOR-1 report by position, matched
+    now against the latest reports: a report of the comet we're following
+    usually arrives hours after our alert."""
+    for f in pending:
+        if reps and (f.get("known") or {}).get("how") != "position":
+            k = reported_by(seen(f), t, reps)
+            if k:
+                f["known"] = k
+                print(f"{t:%H:%M} {Path(f['alert']).stem} is {who(k)}, by position", file=sys.stderr)
 
 
 PASSAGE = timedelta(hours=12)  # a Kreutz comet stays in CCOR-1's field about this long after it's found
@@ -207,6 +239,18 @@ def matched_report(track, reps, held=False):
     return None
 
 
+def best_report(known, track, reps, held=False):
+    """What an object is known as now: a match by position (certain), from
+    when it was decided or against today's reports, else the guess by
+    time it was filed under, else a fresh guess by time."""
+    if known and known.get("how") == "position":
+        return known
+    found = matched_report(track, reps, held=held) if reps else None
+    if found and found["how"] == "position":
+        return found
+    return known or found
+
+
 def who(known):
     """'Jiangao Ruan report_jr_... (CCOR1)' for a reported_by record."""
     return f"{known['reporter']} {known['id']} ({known['telescope']})"
@@ -219,6 +263,9 @@ def other_instruments(track, reps):
 
 
 CONFIRM_LOST = 3  # consecutive frames without the object before a candidate is dropped
+CHAIN_PX = 8.0  # a search chain this close to a follow-up's prediction is the same object
+FOLLOWED_PX = 15.0  # and so is a new chain this close to a follow-up's prediction (+ FOLLOWED_GROW/frame)
+FOLLOWED_GROW = 1.0
 CONFIRMED_LOST = 12  # the same for a confirmed object: it's real, so wait out a stray-light spell (3 h)
 RENDER_EVERY = 4  # frames between progress renders of a confirmed object
 RENDER_LOST = 8  # the render's follower tolerates this many misses (a stray-light hour)
@@ -253,14 +300,46 @@ def seen(f):
     return f["track"] + [{"time": t.isoformat(), "x": x, "y": y, "vx": f["vx"], "vy": f["vy"]}]
 
 
-def follow_up(seq, last, pending, notify, render=False):
+def chained(f, chains, t, dt):
+    """The search's own sighting of a followed object in the window ending
+    at t, as a measured point (t, x, y, score), if a chain's newest
+    candidate sits where the follow-up predicts it and moves with it. The
+    search stacks frames, so it holds a comet too faint to stand out in
+    any single frame; the follow-up's single-frame measurement used to
+    lose those within an hour while the search went on chaining them for
+    the rest of the day."""
+    px, py = f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt
+    for ch in chains:
+        c = ch[-1]
+        if datetime.fromisoformat(c["time"]) == t and np.hypot(c["x"] - px, c["y"] - py) <= CHAIN_PX \
+                and np.hypot(c["vx"] - f["vx"], c["vy"] - f["vy"]) <= 2 * LINK_DV:
+            return (t, float(c["x"]), float(c["y"]), float(c["score"]))
+    return None
+
+
+def followed(c, t, pending):
+    """Is candidate c at time t one of the objects already being followed?
+    The follow-up knows where its comet is now, which the memory of where
+    it was alerted doesn't: Kreutz comets speed up, so a straight line
+    from the alert falls behind by the hour, and the search was re-alerting
+    the comet it was following."""
+    for f in pending:
+        dt = (t - f["t"]) / FRAME
+        if 0 <= dt <= CONFIRMED_LOST and np.hypot(f["x"] + f["vx"] * dt - c["x"],
+                                                  f["y"] + f["vy"] * dt - c["y"]) <= FOLLOWED_PX + FOLLOWED_GROW * dt:
+            return True
+    return False
+
+
+def follow_up(seq, last, pending, notify, render=False, chains=()):
     """Keep measuring alerted objects in each new frame. Once one has been
     seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
     gets the report block and the notify command runs on it. It's then
     still followed, re-rendered every RENDER_EVERY frames if --render, until
     it has been missing for CONFIRMED_LOST frames in a row (logged as
     ended); a candidate missing CONFIRM_LOST frames before confirmation is
-    logged as faded."""
+    logged as faded. A frame where the single-frame measurement fails but
+    the search's chains still hold the object (chained) counts as seen."""
     keep = []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for f in pending:
@@ -270,6 +349,9 @@ def follow_up(seq, last, pending, notify, render=False):
             continue
         pts = measure(seq, last, f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt, f["vx"], f["vy"],
                       back=0, ahead=0, lost=0)
+        if not pts:
+            hit = chained(f, chains, seq.times[last], dt)
+            pts = [hit] if hit else []
         if not pts:
             f["misses"] += 1
             if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
@@ -427,8 +509,9 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
            files_of=lambda name: {"alert": None, "confirmed": None}, reps=None):
     """The status page's data: what's open, what's being followed and at
     which stage, and the last decisions. Paths are relative to data/live/.
-    Each object's "report" is the Sungrazer report that fits it as of now:
-    what it was known as when decided, else matched_report() against reps.
+    Each object's "report" is the Sungrazer report that fits it as of now
+    (best_report): a match by position, from when it was decided or found
+    now in reps, else the guess by time it was filed under.
     rendered(name) gives a render's pictures() or None; files_of(name) an
     alert's files (alert_files), which carry the full track and the times
     the object was found and confirmed, whatever the log window shows."""
@@ -462,7 +545,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
-            "report": with_url(f.get("known") or matched_report(f["track"], reps, held=bool(f.get("confirmed")))),
+            "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
             "pictures": rendered(name), "rendering": rendering(f)})
     decisions = []
     for r in recent:
@@ -476,7 +559,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "known": known, "how": r.get("how"), "frames": r.get("frames"), "note": r.get("note"),
             "found_utc": (files["alert"] or {}).get("decided_utc") or (r["decided_utc"] if r["kind"] in ("alert", "reported") else None),
             "confirmed_utc": (files["confirmed"] or {}).get("decided_utc"),
-            "report": known or with_url(matched_report(track, reps, held=r["kind"] in ("confirmed", "ended"))),
+            "report": with_url(best_report(known, track, reps, held=r["kind"] in ("confirmed", "ended"))),
             "pictures": rendered(name) if name else None})
     return {"updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
             "open": len(chains), "longest": len(longest) if longest else 0,
@@ -553,7 +636,7 @@ def main():
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         seq = Sequence(frame_paths(now - history - timedelta(hours=2), now))
         if field is None:
-            field = build_field(seq.shape)
+            field = lane_field() if seq.shape == (FRAME_ROWS, 2048) else build_field(seq.shape)
         todo = [i for i, t in enumerate(seq.times)
                 if t not in done and i >= BG_FRAMES + BG_SKIP + args.n]
         for last in todo:
@@ -594,11 +677,11 @@ def main():
             done.add(t)
             print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, {open_tracks(chains)}", file=sys.stderr)
             try:
-                pending = follow_up(seq, last, pending, args.notify, args.render)
+                pending = follow_up(seq, last, pending, args.notify, args.render, chains)
             except Exception as e:  # a follow-up must never take the watcher down
                 print(f"{t:%H:%M} follow-up error: {e}", file=sys.stderr)
             for ch in chains:
-                if len(ch) == args.link and not is_known(ch[-1], t) \
+                if len(ch) == args.link and not is_known(ch[-1], t) and not followed(ch[-1], t, pending) \
                         and moves([dict(c, t=datetime.fromisoformat(c["time"])) for c in ch]):
                     c = ch[-1]
                     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -659,6 +742,7 @@ def main():
                 if reps_at is None or datetime.now(timezone.utc).replace(tzinfo=None) - reps_at >= STATUS_REPORTS_EVERY:
                     reps = latest_reports() or reps
                     reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                recheck(pending, t, reps)
                 write_status(chains, pending, t, reps)
             except Exception as e:
                 print(f"{t:%H:%M} status error: {e}", file=sys.stderr)
