@@ -3,10 +3,12 @@
     docker compose run --rm kreutz kreutz.style /data/render/sep16 [--preset soft] [--all]
 
 Writes data/render/<name>/style-<preset>/: crop.gif (the object held still,
-stars sliding past), field.gif (the region it crosses, object ringed if
-the preset says so), crop/ and field/ as numbered PNG frames, still.png
-(the STACK plane). 8-bit grayscale. The PNG frames and still are full
-resolution; field.gif is made to be looked at rather than kept: at most
+stars sliding past), field.gif (the region it crosses, the object marked
+with a yellow crosshair if the preset says so), crop/ and field/ as
+numbered PNG frames, still.png (the STACK plane). Pictures are 8-bit
+gray from the data, as RGB where a tint or the mark colors them (field
+frames of a marking preset, everything of a tinted one). The PNG frames
+and still are full resolution; field.gif is made to be looked at rather than kept: at most
 GIF_MAX px on its long side (--gif-max, 0 for full size) and GIF_LEVELS
 gray levels, since a whole crossing's field is most of the frame and a
 GIF of it at full size runs to tens of megabytes (the noise dithers the
@@ -31,21 +33,25 @@ PRESETS = {
     # stretch is scaled to the field, so noise and glow sit in mid-grays
     # and the comet is a bright thing in a luminous field.
     "soft": dict(highpass=None, smooth=0.7, sun_mask=None, stretch="linear",
-                 ref="field", units="sigma", lo=-2, hi=10, ring=False, scale=3, tint=None),
+                 ref="field", units="sigma", lo=-2, hi=10, mark=True, scale=3, tint=None),
     # The same, toned like an old plate.
     "tintype": dict(highpass=None, smooth=0.7, sun_mask=None, stretch="linear",
-                    ref="field", units="sigma", lo=-2, hi=10, ring=False, scale=3,
+                    ref="field", units="sigma", lo=-2, hi=10, mark=True, scale=3,
                     tint=((28, 24, 18), (232, 214, 178))),
     # Everything wider than a tail removed, glare near the Sun blanked,
     # asinh stretch scaled to the comet crop: stars and comet on black.
     "highpass": dict(highpass=12, smooth=0.7, sun_mask=340, stretch="asinh",
-                     ref="crop", units="percentile", lo=30, hi=99.9, ring=True, scale=3, tint=None),
+                     ref="crop", units="percentile", lo=30, hi=99.9, mark=True, scale=3, tint=None),
 }
 # ref: what the stretch is scaled to, the comet crop or the field.
 # units: lo/hi as percentiles of it, or as multiples of its robust noise
 # (median absolute deviation) about its median, which ignores a few
 # bright pixels (the glare at the occulter edge) that percentiles don't.
+# mark: crosshair the object in the field pictures (the crop has it at
+# the center anyway).
 DURATION = 150
+MARK = (255, 220, 90)  # the crosshair's color
+MARK_GAP, MARK_LEN = 7, 7  # px from the object to each tick, and the tick's length
 
 
 def process(cube, p, sun=None):
@@ -93,6 +99,24 @@ def toned(img8, tint):
     return Image.fromarray(rgb.astype(np.uint8))
 
 
+def stamp(im, text, label):
+    """The caption at top left; a gray label on a gray image, else RGB."""
+    fill = label if im.mode == "L" or isinstance(label, tuple) else (label,) * 3
+    ImageDraw.Draw(im).text((4, 2), text, fill=fill)
+
+
+def crosshair(im, x, y, scale=1.0):
+    """im (made RGB) with four short ticks around (x, y), a gap around the
+    object so the mark never covers it; sized for an image shrunk by
+    `scale`."""
+    im = im.convert("RGB")
+    d = ImageDraw.Draw(im)
+    gap, ln = max(2, round(MARK_GAP * scale)), max(2, round(MARK_LEN * scale))
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        d.line([x + dx * gap, y + dy * gap, x + dx * (gap + ln), y + dy * (gap + ln)], fill=MARK)
+    return im
+
+
 GIF_MAX = 800  # field.gif's long side, px
 GIF_LEVELS = 64  # gray levels in field.gif; LZW likes fewer, the eye can't tell on a noisy field
 
@@ -115,9 +139,23 @@ def shrunk(img8, max_px):
     return np.array(Image.fromarray(img8).resize((round(w * k), round(h * k)), Image.LANCZOS)), k
 
 
+def paletted(im):
+    """im as a palette image. A frame of ours has few colors (GIF_LEVELS
+    grays, or those toned, plus the mark and the label), so when they fit
+    a palette they're kept exactly; a median cut would fold the few
+    yellow pixels of the mark into the gray around them."""
+    if im.mode != "RGB":
+        return im
+    colors = im.getcolors(256)
+    if colors is None:
+        return im.quantize(256)
+    pal = Image.new("P", (1, 1))
+    pal.putpalette([c for _, rgb in colors for c in rgb])
+    return im.quantize(palette=pal, dither=Image.Dither.NONE)
+
+
 def save_gif(frames, path):
-    if frames[0].mode == "RGB":
-        frames = [f.quantize(256) for f in frames]
+    frames = [paletted(f) for f in frames]
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=DURATION, loop=0)
 
 
@@ -149,20 +187,18 @@ def render(src, preset, gif_max=GIF_MAX):
         tag = f"{times[k][:10]} {times[k][11:16]} UTC"
         c = np.kron(to8(crop_p[k], lo, hi, p["stretch"]), np.ones((p["scale"], p["scale"]), np.uint8))
         im = toned(c, p["tint"])
-        ImageDraw.Draw(im).text((4, 2), tag, fill=label)
+        stamp(im, tag, label)
         crop_frames.append(im)
         f8 = to8(field_p[k], lo, hi, p["stretch"])
 
         def field_image(f8, scale=1.0):
             im = toned(f8, p["tint"])
-            d = ImageDraw.Draw(im)
-            if p["ring"]:
+            if p["mark"]:
                 # report (x, y) -> field array (row, col) -> flipped display row
                 rr = (field_p.shape[1] - 1 - ((hdr["NFULLROW"] - 1 - ys[k]) - r0)) * scale
                 cc = (xs[k] - c0) * scale
-                rad = 12 * scale
-                d.ellipse([cc - rad, rr - rad, cc + rad, rr + rad], outline=label)
-            d.text((4, 2), tag, fill=label)
+                im = crosshair(im, cc, rr, scale)
+            stamp(im, tag, label)
             return im
 
         field_frames.append(field_image(f8))
@@ -178,8 +214,7 @@ def render(src, preset, gif_max=GIF_MAX):
     slo, shi = limits(stack_p, p)
     s = np.kron(to8(stack_p, slo, shi, p["stretch"]), np.ones((p["scale"], p["scale"]), np.uint8))
     im = toned(s, p["tint"])
-    ImageDraw.Draw(im).text((4, 2), f"{times[0][:16].replace('T', ' ')} to {times[-1][11:16]} UTC, "
-                                    f"{len(times)} frames", fill=label)
+    stamp(im, f"{times[0][:16].replace('T', ' ')} to {times[-1][11:16]} UTC, {len(times)} frames", label)
     im.save(out / "still.png")
     print(out)
 
