@@ -276,3 +276,34 @@ def test_load_state_backfills_times_from_alert_files(tmp_path, monkeypatch):
     live.save_state({t0}, [], [old], timedelta(hours=13), tmp_path / "state.json")
     _, _, (f,) = live.load_state(t0, timedelta(hours=13), tmp_path / "state.json")
     assert (f["decided_utc"], f["confirmed_utc"]) == ("2026-10-09T19:28:00", "2026-10-09T19:51:00")
+
+
+def test_crosshair_leaves_the_object_clear():
+    from PIL import Image
+    from kreutz import style
+    im = style.crosshair(Image.fromarray(np.zeros((40, 40), np.uint8)), 20, 20)
+    assert im.mode == "RGB"
+    assert im.getpixel((20, 20)) == (0, 0, 0)  # the object itself
+    assert im.getpixel((20 + style.MARK_GAP + 1, 20)) == style.MARK  # a tick
+    assert im.getpixel((20, 20 - style.MARK_GAP - 1)) == style.MARK
+    assert im.getpixel((20 + 3, 20)) == (0, 0, 0)  # inside the gap
+    # shrunk pictures get a shorter mark, never a vanishing one
+    small = style.crosshair(Image.fromarray(np.zeros((10, 10), np.uint8)), 5, 5, scale=0.1)
+    assert small.getpixel((5 + 2, 5)) == style.MARK
+
+
+def test_gif_frames_keep_the_mark_color():
+    from PIL import Image
+    from kreutz import style
+    gray = (np.arange(40 * 40, dtype=np.int32).reshape(40, 40) % 64 * 4).astype(np.uint8)
+    im = style.crosshair(Image.fromarray(gray), 20, 20)
+    p = style.paletted(im)
+    assert p.mode == "P"
+    assert p.convert("RGB").getpixel((20 + style.MARK_GAP + 1, 20)) == style.MARK
+    assert p.convert("RGB").getpixel((0, 0)) == (0, 0, 0)
+    # the caption is white whether the picture is gray or (marked) RGB
+    for mode in ("L", "RGB"):
+        g = Image.new(mode, (30, 12))
+        style.stamp(g, "x", 255)
+        r, gg, b = g.convert("RGB").getextrema()  # white-ish, not a red int-as-RGB
+        assert r == gg == b and r[1] > 200
