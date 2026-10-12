@@ -122,7 +122,9 @@ function card(f, s) {
 }
 
 const LABEL = {alert: 'candidate', confirmed: 'confirmed', reported: 'already reported',
-               star: 'a star', faded: 'faded', ended: 'left the field'};
+               star: 'a star', stationary: 'not moving', 'off-lane': 'off the lane',
+               rejected: 'rejected', faded: 'faded', ended: 'left the field'};
+const JUNK = ['star', 'stationary', 'off-lane', 'rejected', 'faded'];  // never 'unreported'
 const STYLE = {alert: 'candidate', confirmed: 'confirmed', reported: 'known'};
 
 // One row per object: its decisions in the log, oldest first.
@@ -139,14 +141,15 @@ function group(recent) {
 function row(hist) {
   const last = hist.at(-1), first = hist[0];
   // noise that faded, or a star, isn't 'unreported'; only a real match is worth a badge
-  const report = ['star', 'faded'].includes(last.kind) && !last.report ? '' : reportBadge(last.report);
+  const report = JUNK.includes(last.kind) && !last.report ? '' : reportBadge(last.report);
   // when it was found and confirmed: on the record itself (from the alert
   // files), else from whatever of its history is in the window
   const found = last.found_utc || (hist.find(r => ['alert', 'reported'].includes(r.kind)) || {}).decided_utc;
   const confirmed = last.confirmed_utc || (hist.find(r => r.kind === 'confirmed') || {}).decided_utc;
   const lead = report && last.report ? leadBadge(last.report, found, confirmed) : '';
   const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
-              : last.kind === 'ended' ? ` after ${last.frames} frames` : '';
+              : last.kind === 'ended' ? ` after ${last.frames} frames`
+              : last.note ? ` ${esc(last.note)}` : '';
   const timeline = hist.map(r => `${LABEL[r.kind] || r.kind} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
   const pic = last.pictures ? last.pictures.preview : last.gif;
   const stamp = last.pictures ? last.pictures.made_utc : last.decided_utc;

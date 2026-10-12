@@ -10,6 +10,14 @@ real comet moves its own way; a star moves exactly with the field.
 Seen on the live feed 2026-10-05 01:15: search said (1.0, -2.0) px/frame,
 the raw centroids said (1.84, -0.63), the local star drift was
 (1.87, -0.61).
+
+The same fit tells two more things the search's coarse velocity can't.
+An object that isn't moving at all: the post-eclipse blob of 2026-10-08
+07:45 sat within a quarter pixel for six frames while the search's stack
+peaks wandered enough to pass as 3 px/frame (is_stationary). And one
+moving against the Kreutz lane's flow (lane.off_flow): the stray-light
+feature of the eclipse-season mornings crept right at 3 px/frame where
+every comet heads left at 8.
 """
 
 from dataclasses import dataclass
@@ -23,6 +31,7 @@ FOLLOW_FRAMES = 10
 FOLLOW_R = 4        # px around each prediction to look for the peak
 PEAK_SIGMA = 4.0    # a frame counts when the peak stands this far above
 STAR_MATCH = 0.4    # px/frame from the star drift: moving with the stars
+STATIONARY = 1.0    # px/frame: measured over three frames or more and slower than this, it isn't moving
 
 
 @dataclass
@@ -36,6 +45,15 @@ class Motion:
     @property
     def is_star(self):
         return np.hypot(self.vx - self.star_vx, self.vy - self.star_vy) < STAR_MATCH
+
+    @property
+    def measured(self):
+        """vx, vy are fitted to the raw frames (else they're the search's)."""
+        return len(self.points) >= 3
+
+    @property
+    def is_stationary(self):
+        return self.measured and np.hypot(self.vx, self.vy) < STATIONARY
 
 
 def follow(seq: Sequence, last: int, x: float, y: float, vx: float, vy: float):

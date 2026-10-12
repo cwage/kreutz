@@ -38,7 +38,9 @@ V_STEP = 0.5
 # The inner edge: inside ~460 px the corona is striped with fine radial
 # rays, and a track pointed at the Sun stacks a ray into a "detection"
 # (live alert 2026-10-05 22:15, r=430 px). Every Kreutz comet reported in
-# CCOR-1 in July-August 2025 was first seen at 459 px or farther.
+# CCOR-1 in July-August 2025 was first seen at 459 px or farther. (Those
+# distances were measured about the WCS reference pixel, which is 40 px
+# from the Sun; the annulus is about the Sun now, frames.sun_pixel.)
 R_MIN, R_MAX = 460, 1250
 ANGLE_MAX = 75  # deg either side of straight right of the Sun
 # Stay this far inside the frame: the outermost rows and columns carry

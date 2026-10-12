@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
+from astropy.wcs import WCS
 from scipy.ndimage import (binary_dilation, gaussian_filter, map_coordinates,
                            maximum_filter, uniform_filter)
 from scipy.spatial import cKDTree
@@ -109,6 +110,24 @@ def _cache_path(raw_path):
     return SIG_CACHE / _cache_key() / f"{t:%Y/%m/%d}" / (Path(raw_path).stem + ".npy")
 
 
+def sun_pixel(header):
+    """Sun center (row, col), 0-based, from a frame's helioprojective WCS;
+    the reference pixel for a header without one. In CCOR-1 L1b frames the
+    reference pixel isn't the Sun: CRVAL puts the Sun 0.215 deg, 40 px,
+    from it, the same in every frame, and the occulter's glare ring is
+    round about the WCS position and lopsided about CRPIX (the radius of
+    its peak varies 7 px by sector about the one, 33 px about the other)."""
+    ref = header["CRPIX2"] - 1, header["CRPIX1"] - 1
+    if not str(header.get("CTYPE1", "")).startswith("HPLN"):
+        return ref
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        col, row = WCS(header).wcs_world2pix([[0.0, 0.0]], 1)[0]
+    if not (np.isfinite(row) and np.isfinite(col)):
+        return ref
+    return float(row - 1), float(col - 1)
+
+
 class Sequence:
     """A run of consecutive frames with a lazily built significance map each."""
 
@@ -121,6 +140,7 @@ class Sequence:
         self._disp = {}
         self.header = load(self.paths[0])[1]
         self.shape = (self.header["NAXIS2"], self.header["NAXIS1"])
+        self._sun = None
 
     def raw(self, i):
         if i not in self._raw:
@@ -325,5 +345,7 @@ class Sequence:
         return col, self.shape[0] - 1 - row
 
     def sun_rc(self):
-        """Sun center (row, col), from the WCS reference pixel (1-based)."""
-        return self.header["CRPIX2"] - 1, self.header["CRPIX1"] - 1
+        """Sun center (row, col) in the first frame (sun_pixel)."""
+        if self._sun is None:
+            self._sun = sun_pixel(self.header)
+        return self._sun

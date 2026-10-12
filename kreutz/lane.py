@@ -99,6 +99,33 @@ def in_lane(field, x, y, vx, vy, H):
     return bool(np.hypot(fvc - vx, -fvr - vy) <= MATCH_DV)
 
 
+# For vetting a measured motion: along the flow at that spot to within
+# FLOW_ANGLE. Direction only, since a comet speeds up past the samples'
+# flow as it nears the Sun (the 2026-10-08 comet was doing 15 px/frame at
+# 1400 px where the flow says 11, which in_lane's velocity match rejects).
+# This season's real tracks were within 12 deg of the flow; the stray-light
+# features that fired on eclipse-season mornings were 54 deg off and more.
+FLOW_ANGLE = 45.0
+
+
+def flow_at(field, x, y, H):
+    """The lane flow (vx, vy), report coords, at a report position: the
+    distance-weighted mean of the nearest samples', anywhere in the frame."""
+    d, k = field.tree.query([H - 1 - y, x], k=min(K_NEAREST, len(field.svr)))
+    w = 1 / (d + 5.0)
+    return float((field.svc[k] * w).sum() / w.sum()), float(-(field.svr[k] * w).sum() / w.sum())
+
+
+def off_flow(field, x, y, vx, vy, H):
+    """Why a motion (report coords) isn't the lane's at (x, y), or None."""
+    fx, fy = flow_at(field, x, y, H)
+    cos = (vx * fx + vy * fy) / (np.hypot(vx, vy) * np.hypot(fx, fy) + 1e-30)
+    ang = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+    if ang > FLOW_ANGLE:
+        return f"{ang:.0f} deg off the lane flow, ({vx:+.1f},{vy:+.1f}) where it runs ({fx:+.1f},{fy:+.1f})"
+    return None
+
+
 def lane_search(seq: Sequence, last: int, n: int, threshold: float, field: Field):
     """Candidates in the lane for the window of n frames ending at `last`."""
     idx, back = window_frames(seq, last, n)

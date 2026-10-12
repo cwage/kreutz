@@ -12,10 +12,17 @@ data/live/alerts/<time>.json with a crop animation beside it, and the
 object is then measured in each new frame (report.py); once it has been
 seen in five frames a second, "confirmed" file is written with the report
 block ready to paste into Sungrazer's form, and it keeps being followed
-until it's lost. Every outcome (alert, star, already reported, confirmed,
-faded) is appended to data/live/log.jsonl with the wall-clock time it was
-decided, which is what score.py turns into a table of leads and lags
-against the reports.
+until it's lost. A track that fires is vetted first (vet.py): followed
+back through the raw frames, it's dropped as a star if it moves with the
+star drift, as stationary if it doesn't move, and as off-lane if its
+motion runs more than lane.FLOW_ANGLE from the Kreutz flow there. A
+follow-up is rejected rather than confirmed when its measured frames
+don't lie on a line, don't move, or run against the lane; the
+eclipse-season glare feature that was confirmed on 2026-10-11 fails all
+three. Every outcome (alert, star, stationary, off-lane, already
+reported, confirmed, rejected, faded, ended) is appended to
+data/live/log.jsonl with the wall-clock time it was decided, which is
+what score.py turns into a table of leads and lags against the reports.
 
 data/live/state.json is rewritten after every window too: the windows
 searched, the open chains and the follow-ups. A restart loads it and
@@ -67,13 +74,13 @@ from PIL import Image
 from . import DATA
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
-from .lane import build_field, in_lane
+from .lane import build_field, in_lane, off_flow
 from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
-from .report import MIN_POINTS, block, measure
+from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, consistent, search
 from .shortlist import FRAME_ROWS, _known_by_position
-from .vet import follow
+from .vet import STATIONARY, follow
 
 FEED = "https://services.swpc.noaa.gov/products/ccor1/fits/"
 POLL_S = 120
@@ -331,7 +338,28 @@ def followed(c, t, pending):
     return False
 
 
-def follow_up(seq, last, pending, notify, render=False, chains=()):
+# A confirmation's measured frames have to lie on a line. The largest
+# residual allowed grows with the arc, since a comet accelerates: 0.5 px
+# over 5 frames and 1.2-1.5 px over 14 for this season's real comets,
+# 3.1 px over 6 for the glare feature of 2026-10-11.
+RESIDUAL_PER_FRAME = 0.3
+
+
+def unlikely(points, field=None, H=FRAME_ROWS):
+    """Why measured frames aren't a comet, or None: they don't lie on a
+    line, the fitted motion is stationary, or it runs against the lane."""
+    vx, vy, resid = fit(points)
+    if resid > RESIDUAL_PER_FRAME * len(points):
+        return f"straight-line residual {resid:.1f} px over {len(points)} frames"
+    if np.hypot(vx, vy) < STATIONARY:
+        return f"stationary ({np.hypot(vx, vy):.1f} px/frame over {len(points)} frames)"
+    if field is not None:
+        _, x, y, _ = points[-1]
+        return off_flow(field, x, y, vx, vy, H)
+    return None
+
+
+def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
     """Keep measuring alerted objects in each new frame. Once one has been
     seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
     gets the report block and the notify command runs on it. It's then
@@ -339,7 +367,10 @@ def follow_up(seq, last, pending, notify, render=False, chains=()):
     it has been missing for CONFIRMED_LOST frames in a row (logged as
     ended); a candidate missing CONFIRM_LOST frames before confirmation is
     logged as faded. A frame where the single-frame measurement fails but
-    the search's chains still hold the object (chained) counts as seen."""
+    the search's chains still hold the object (chained) counts as seen.
+    At the confirming frame the measured points are vetted (unlikely):
+    what fails is logged as rejected and dropped, with no notification
+    and no render."""
     keep = []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for f in pending:
@@ -370,6 +401,12 @@ def follow_up(seq, last, pending, notify, render=False, chains=()):
         f["vx"], f["vy"] = (x - f["x"]) / dt, (y - f["y"]) / dt
         f["t"], f["x"], f["y"] = t, x, y
         if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
+            why = unlikely(f["points"], field, seq.shape[0] if field is not None else FRAME_ROWS)
+            if why:
+                remember(seen(f)[-1], f"auto: {why}")
+                log("rejected", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=why)
+                print(f"REJECTED {f['alert']} ({len(f['points'])} frames, {why})", flush=True)
+                continue
             f["confirmed"] = True
             f["confirmed_utc"] = now.isoformat(timespec="seconds")
             lines, note = block(f["points"])
@@ -687,7 +724,7 @@ def main():
             except Exception as e:
                 print(f"{t:%H:%M} reports error: {e}", file=sys.stderr)
             try:
-                pending = follow_up(seq, last, pending, args.notify, args.render, chains)
+                pending = follow_up(seq, last, pending, args.notify, args.render, chains, field)
             except Exception as e:  # a follow-up must never take the watcher down
                 print(f"{t:%H:%M} follow-up error: {e}", file=sys.stderr)
             for ch in chains:
@@ -701,6 +738,19 @@ def main():
                                     f"vs drift ({m.star_vx:+.2f},{m.star_vy:+.2f})")
                         log("star", ch, now_utc)
                         print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is a star", file=sys.stderr)
+                        continue
+                    if m.is_stationary:
+                        why = f"stationary ({np.hypot(m.vx, m.vy):.2f} px/frame over {len(m.points)} frames)"
+                        remember(c, f"auto: {why}")
+                        log("stationary", ch, now_utc, note=why)
+                        print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is {why}", file=sys.stderr)
+                        continue
+                    # the raw-frame motion where there was enough to fit it, else the search's
+                    why = off_flow(field, c["x"], c["y"], m.vx, m.vy, seq.shape[0])
+                    if why:
+                        remember(c, f"auto: {why}")
+                        log("off-lane", ch, now_utc, note=why)
+                        print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is {why}", file=sys.stderr)
                         continue
                     reps = latest_reports() or reps
                     reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
