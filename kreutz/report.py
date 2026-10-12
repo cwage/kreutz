@@ -13,7 +13,8 @@ frame in the form Sungrazer's report form takes:
 
 in CCOR-1 L1b image coordinates (x right, y down from the top). The form
 wants at least five consecutive frames in a straight line at a steady
-speed; fewer gets a warning here. The submission itself is yours to make.
+speed; fewer gets a warning here, and so does an object that doesn't move
+(vet.STATIONARY). The submission itself is yours to make.
 """
 
 import argparse
@@ -25,6 +26,7 @@ import numpy as np
 
 from .frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths
 from .render import follow
+from .vet import STATIONARY
 
 MIN_POINTS = 5
 CENTROID_R = 3
@@ -66,16 +68,25 @@ def measure(seq, i0, x, y, vx, vy, back=12, ahead=12, lost=2):
     return out
 
 
+def fit(points):
+    """A straight line through measured points [(time, x, y, sigma)]:
+    (vx, vy) in px/frame and the largest residual in px; zeros for fewer
+    than two points."""
+    if len(points) < 2:
+        return 0.0, 0.0, 0.0
+    k = np.array([(t - points[0][0]) / timedelta(minutes=15) for t, *_ in points])
+    xs = np.array([p[1] for p in points]); ys = np.array([p[2] for p in points])
+    px, py = np.polyfit(k, xs, 1), np.polyfit(k, ys, 1)
+    resid = np.hypot(xs - np.polyval(px, k), ys - np.polyval(py, k)).max()
+    return float(px[0]), float(py[0]), float(resid)
+
+
 def block(points):
     """The report lines, plus a one-line verdict on straightness."""
     lines = [f"{t:%H%M} {x:.0f} {y:.0f}" for t, x, y, _ in points]
     note = ""
     if len(points) >= 3:
-        k = np.array([(t - points[0][0]) / timedelta(minutes=15) for t, *_ in points])
-        xs = np.array([p[1] for p in points]); ys = np.array([p[2] for p in points])
-        rx = xs - np.polyval(np.polyfit(k, xs, 1), k)
-        ry = ys - np.polyval(np.polyfit(k, ys, 1), k)
-        note = f"straight-line residual {np.hypot(rx, ry).max():.1f} px over {len(points)} frames"
+        note = f"straight-line residual {fit(points)[2]:.1f} px over {len(points)} frames"
     return lines, note
 
 
@@ -101,6 +112,9 @@ def main():
     if gif and gif.startswith("/data/"):
         gif = gif[1:]  # the container's /data is the project's data/; print it as seen from there
     print(f"# CCOR1, {pts[0][0]:%Y-%m-%d} UTC, {len(pts)} frames; {note}")
+    vx, vy, _ = fit(pts)
+    still = len(pts) >= 3 and np.hypot(vx, vy) < STATIONARY
+    print(f"# motion ({vx:+.1f},{vy:+.1f}) px/frame" + (f": stationary (under {STATIONARY} px/frame), not a comet" if still else ""))
     if gif:
         print(f"# vetting animation: {gif} (real if it holds still while stars drift)")
     print(f"# form: {FORM_URL}  telescope CCOR1, group Kreutz if it came in along the lane")

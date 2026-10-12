@@ -8,7 +8,8 @@ import json
 import numpy as np
 import pytest
 
-from kreutz import evaluate, live, reports, search
+from kreutz import evaluate, lane, live, report, reports, search, vet
+from kreutz.frames import sun_pixel
 from kreutz.frames import Sequence
 
 F = timedelta(minutes=15)
@@ -379,3 +380,69 @@ def test_best_report_prefers_a_position_match():
     assert live.best_report(guess, track, reps)["reporter"] == "Jiangao Ruan"
     assert live.best_report(guess, track, [])["reporter"] == "Mikolaj Kaszczyk"
     assert live.best_report(None, track, reps)["how"] == "position"
+
+
+def test_sun_pixel_comes_from_the_wcs_not_the_reference_pixel():
+    from astropy.io import fits
+    h = fits.Header()  # the WCS of the 2026-10-12 02:45 frame: the Sun is 40 px from CRPIX
+    for k, v in {"NAXIS1": 2048, "NAXIS2": 1920, "WCSAXES": 2, "CTYPE1": "HPLN-ZPN", "CTYPE2": "HPLT-ZPN",
+                 "CUNIT1": "deg", "CUNIT2": "deg", "CRPIX1": 1044.9281046400001, "CRPIX2": 950.94145667,
+                 "CRVAL1": 0.15712334354340432, "CRVAL2": -0.1467966047586972,
+                 "CDELT1": 0.005370007103014486, "CDELT2": 0.005370007103014486,
+                 "PC1_1": 0.9010203819677571, "PC1_2": 0.43377675281033323,
+                 "PC2_1": -0.43377675281033323, "PC2_2": 0.9010203819677571,
+                 "PV1_1": 0.0, "PV1_2": 90.0, "PV1_3": 180.0, "PV2_0": -7.91559035e-07, "PV2_1": 1.00014749,
+                 "PV2_2": -0.00566578401, "PV2_3": 0.99620514, "LONPOLE": 180.0, "LATPOLE": 0.0}.items():
+        h[k] = v
+    assert sun_pixel(h) == pytest.approx((961.9, 1005.7), abs=0.3)
+    bare = fits.Header()
+    bare["CRPIX1"], bare["CRPIX2"] = 1044.9, 950.9
+    assert sun_pixel(bare) == pytest.approx((949.9, 1043.9))
+
+
+def test_motion_vetting_catches_stationary_and_off_lane():
+    samples = [[1950 - 9 * k, 1250 - 2.5 * k, -9.0, -2.5] for k in range(60)]  # a lane from (1950,1250)
+    field = lane.build_field((1920, 2048), samples)
+    assert lane.off_flow(field, 1600, 1150, -10.0, -2.5, 1920) is None
+    assert lane.off_flow(field, 1400, 1086, -15.1, -3.4, 1920) is None  # faster than the flow, the same way
+    assert "off the lane flow" in lane.off_flow(field, 1265, 1619, 2.8, -1.4, 1920)  # the Oct 11 glare edge
+    pts = [(k, 1265.0, 1619.0, 5.0) for k in range(3)]
+    assert vet.Motion(0.2, 0.1, pts, 1.8, -0.6).is_stationary
+    assert not vet.Motion(0.2, 0.1, pts[:2], 1.8, -0.6).is_stationary  # too few points: the search's velocity
+    assert not vet.Motion(-9.0, -2.5, pts, 1.8, -0.6).is_stationary
+
+
+def test_report_fit_gives_the_motion_and_the_residual():
+    t0 = datetime(2026, 10, 8, 21, 15, 25)
+    pts = [(t0 + timedelta(minutes=15 * k), 1949.0 - 9 * k, 1235.0 - 2.5 * k, 5.0) for k in range(5)]
+    vx, vy, resid = report.fit(pts)
+    assert (vx, vy) == pytest.approx((-9.0, -2.5)) and resid == pytest.approx(0.0, abs=1e-9)
+    assert report.block(pts)[1] == "straight-line residual 0.0 px over 5 frames"
+    assert report.fit(pts[:1]) == (0.0, 0.0, 0.0)
+
+
+def test_follow_up_rejects_what_does_not_lie_on_a_line(monkeypatch, tmp_path):
+    import types
+    t0 = datetime(2026, 10, 11, 6, 0, 25)
+    logged, remembered = [], []
+    monkeypatch.setattr(live, "log", lambda kind, track, decided, **extra: logged.append((kind, extra.get("note"))))
+    monkeypatch.setattr(live, "remember", lambda c, why: remembered.append(why))
+    seq = types.SimpleNamespace(times=[t0 + timedelta(minutes=15 * k) for k in range(5)])
+
+    def pending(points):
+        return {"alert": str(tmp_path / "x.json"), "track": [], "others": [], "known": None, "points": list(points),
+                "t": points[-1][0], "x": points[-1][1], "y": points[-1][2], "vx": -9.0, "vy": -2.5, "misses": 0}
+    straight = [(seq.times[k], 1883.0 - 9 * k, 1210.0 - 2.5 * k, 6.0) for k in range(4)]
+    # a fifth frame on the line: confirmed
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [(seq.times[4], 1883.0 - 36, 1210.0 - 10, 6.0)])
+    keep = live.follow_up(seq, 4, [pending(straight)], None)
+    assert keep and keep[0]["confirmed"] and logged[-1][0] == "confirmed"
+    # a fifth frame 8 px off the line: rejected and dropped, remembered so it isn't raised again
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [(seq.times[4], 1883.0 - 36, 1210.0 - 2, 6.0)])
+    keep = live.follow_up(seq, 4, [pending(straight)], None)
+    assert keep == [] and logged[-1][0] == "rejected" and "residual" in logged[-1][1] and remembered
+    # five frames that don't move: rejected as stationary
+    still = [(seq.times[k], 1247.0, 1625.0, 6.0) for k in range(4)]
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [(seq.times[4], 1247.2, 1625.1, 6.0)])
+    keep = live.follow_up(seq, 4, [pending(still)], None)
+    assert keep == [] and logged[-1][0] == "rejected" and "stationary" in logged[-1][1]

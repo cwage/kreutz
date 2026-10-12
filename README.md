@@ -41,7 +41,9 @@ acceleration over 16 frames.
 
 Coordinates throughout are Sungrazer report coordinates (x right, y down from
 the top of the displayed image, pixels per 15-minute frame) so results compare
-directly with reports.
+directly with reports. The Sun's center comes from each frame's WCS, at
+(1006, 957) in these coordinates; the WCS reference pixel is 40 px from it
+and is not the Sun.
 
 ## Running it
 
@@ -115,6 +117,12 @@ in view, so the pictures grow with the passage.
 A comet somebody has already reported gets the same files, follow-up and
 pictures, logged as `reported` rather than `alert`; the notification for it
 is a single low-priority one at the confirmed stage.
+Before anything is raised the track is vetted in the raw frames: dropped as
+a star if it moves with the star drift, as stationary if it doesn't move,
+and as off-lane if its motion runs more than 45 degrees from the Kreutz
+flow there. A follow-up whose measured frames don't lie on a line, don't
+move, or run against the lane is rejected instead of confirmed, and nothing
+is sent or rendered for it.
 
 The watcher saves its working state (`data/live/state.json`) after every
 window and resumes from it on restart, so it doesn't re-search the span
