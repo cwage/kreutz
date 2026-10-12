@@ -30,9 +30,11 @@ from . import DATA
 from .search import MAX_MISSING
 
 FRAME = timedelta(minutes=15)
-# Sun center in report coords; drifts a few px, which is fine for a radius
-# cut on stored candidates (the search itself uses each frame's WCS).
-SUN_XY = (1001, 951)
+# Sun center in report coords, where the frames' helioprojective WCS puts
+# it (frames.sun_pixel: 40 px from the WCS reference pixel, and the same
+# in every frame); plenty for a radius cut on stored candidates, since the
+# search itself uses each frame's WCS.
+SUN_XY = (1005.7, 957.1)
 # NOAA publishes each real-time frame 12-19 min after it's taken (measured
 # on the SWPC feed); one more minute covers our search.
 PUBLISH_DELAY = timedelta(minutes=16)
