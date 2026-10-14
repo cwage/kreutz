@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from kreutz import evaluate, lane, live, report, reports, search, vet
-from kreutz.frames import sun_pixel
+from kreutz.frames import flatten, sun_pixel
 from kreutz.frames import Sequence
 
 F = timedelta(minutes=15)
@@ -446,3 +446,18 @@ def test_follow_up_rejects_what_does_not_lie_on_a_line(monkeypatch, tmp_path):
     monkeypatch.setattr(live, "measure", lambda *a, **k: [(seq.times[4], 1247.2, 1625.1, 6.0)])
     keep = live.follow_up(seq, 4, [pending(still)], None)
     assert keep == [] and logged[-1][0] == "rejected" and "stationary" in logged[-1][1]
+
+
+def test_flatten_takes_out_a_hot_column_and_leaves_noise_alone():
+    rng = np.random.default_rng(3)
+    s = rng.standard_normal((400, 300)).astype(np.float32)
+    s[:50, :] = np.nan  # off the detector
+    s[:, 120] += 2.0  # a hot column, like 1806 on 2026-10-14
+    s[200, :] += 1.5  # and a readout stripe
+    out = flatten(s)
+    assert abs(np.nanmedian(out[:, 120])) < 0.15
+    assert abs(np.nanmedian(out[200, :])) < 0.15
+    # ordinary pixels move by at most the medians' sampling noise
+    ok = np.ones(s.shape, bool); ok[:, 120] = False; ok[200, :] = False; ok[:50] = False
+    assert np.nanmax(np.abs(out[ok] - s[ok])) < 0.4
+    assert np.isnan(out[:50]).all()

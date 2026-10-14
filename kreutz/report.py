@@ -106,6 +106,10 @@ def main():
     warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
     seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
     pts = measure(seq, seq.times.index(t), x, y, vx, vy, args.back, args.ahead)
+    if not pts:
+        print(f"# not seen in any frame within {args.back} before and {args.ahead} after {t:%Y-%m-%d %H:%M} UTC "
+              "along that motion (no 4-sigma peak near the predicted position)", file=sys.stderr)
+        sys.exit(1)
     lines, note = block(pts)
     # the vetting GIF belongs to the alert, also when given its .confirmed.json
     gif = args.what[0].replace(".confirmed.json", ".json").replace(".json", ".gif") if len(args.what) == 1 else None

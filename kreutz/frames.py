@@ -102,6 +102,21 @@ def _cache_key():
 SIG_CACHE = DATA / "sig"
 
 
+def flatten(s):
+    """A significance map with each column's and each row's median taken
+    out. Where there's nothing those medians are ~0 (the map is ~N(0,1)
+    and a column is ~1900 pixels) and this changes nothing; a hot column
+    (column 1806 on 2026-10-14, 2 sigma along its whole length for three
+    hours) or a readout stripe is an offset along its length, and without
+    this the search stacks it into dozens of movers along it per window.
+    Applied to maps as they're computed and as they're read from the
+    cache, so the cache stays valid."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # all-NaN border columns and rows
+        s = s - np.nanmedian(s, axis=0, keepdims=True)
+        return s - np.nanmedian(s, axis=1, keepdims=True)
+
+
 def _cache_path(raw_path):
     """Where frame `raw_path`'s significance map is cached (float16). The
     map depends on the frames before it too, but only through the same
@@ -156,7 +171,7 @@ class Sequence:
             return self._sig[i]
         cached = _cache_path(self.paths[i])
         if cached.exists():
-            self._sig[i] = np.load(cached).astype(np.float32)
+            self._sig[i] = flatten(np.load(cached).astype(np.float32))
             return self._sig[i]
         # Raw frames older than the background window won't be needed again.
         for j in [j for j in self._raw if j < i - BG_SKIP - BG_FRAMES]:
@@ -185,6 +200,7 @@ class Sequence:
             s = f / sigma
         s[bad | ~np.isfinite(s)] = np.nan
         s[self._star_mask(i)] = np.nan
+        s = flatten(s)
         self._sig[i] = s.astype(np.float32)
         cached.parent.mkdir(parents=True, exist_ok=True)
         tmp = cached.with_suffix(".tmp.npy")

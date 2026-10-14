@@ -29,7 +29,7 @@ def _send(server, topic, title, lines, priority, tags):
                "Message": "\\n".join(lines)}
     req = urllib.request.Request(f"{server}/{topic}", data=b"", headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=60) as r:
-        print(f"notified {server}/{topic}: HTTP {r.status}")
+        print(f"notified {server}: HTTP {r.status}")  # the topic is the secret; keep it out of the log
 
 
 def compose(d, name):
