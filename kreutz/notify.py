@@ -13,7 +13,10 @@ what fired and gives the kreutz.report command to run at a computer,
 which measures the object and prints the block for Sungrazer's form.
 A comet somebody has already reported (the file's "known") gets a single
 low-priority message when it's confirmed, and nothing at the candidate
-stage.
+stage. Nor does a candidate far from the Kreutz lane (the file's
+"near_lane" false: more than lane.MATCH_PX from any archived track);
+the watcher keeps following it, and it pages if it's confirmed, with
+the distance in the message.
 """
 
 import json
@@ -35,7 +38,8 @@ def _send(server, topic, title, lines, priority, tags):
 def compose(d, name):
     """(title, lines, priority, tags) for an alert or confirmed file's
     contents, or None when nothing should be sent: a comet somebody has
-    already reported gets one quiet message, at the confirmed stage."""
+    already reported gets one quiet message, at the confirmed stage, and
+    a candidate off the lane none until it's confirmed."""
     track = d["track"] if isinstance(d, dict) else d
     c = track[-1]
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
@@ -49,7 +53,12 @@ def compose(d, name):
         return (f"kreutz: known comet, {known['reporter']}'s ({known['telescope']})",
                 [f"Reported {posted} UTC, matched by {known['how']}; held {d['frames']} frames, {d['note']}.",
                  "Measure it anyway:", cmd], "low", "comet")
+    far = isinstance(d, dict) and d.get("near_lane") is False
+    if far and not confirmed:
+        return None
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
+    if far:
+        hint += f"; {d['lane_px']} px off the Kreutz lane"
     if confirmed:
         return ("kreutz: CONFIRMED, report ready" if not others else "kreutz: confirmed, likely known",
                 [f"Held {d['frames']} frames, {d['note']}; {hint}.", "Measure and get the form block:", cmd],
@@ -68,9 +77,11 @@ def post(alert_path):
         print("NTFY_TOPIC not set; not notifying", file=sys.stderr)
         return
     p = Path(alert_path)
-    msg = compose(json.load(open(p)), p.name)
+    d = json.load(open(p))
+    msg = compose(d, p.name)
     if msg is None:
-        print(f"{p.name}: known comet at the candidate stage; not notifying")
+        why = "known comet" if isinstance(d, dict) and d.get("known") else "off the lane"
+        print(f"{p.name}: {why} at the candidate stage; not notifying")
         return
     _send(server, topic, *msg)
 

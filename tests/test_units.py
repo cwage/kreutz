@@ -461,3 +461,26 @@ def test_flatten_takes_out_a_hot_column_and_leaves_noise_alone():
     ok = np.ones(s.shape, bool); ok[:, 120] = False; ok[200, :] = False; ok[:50] = False
     assert np.nanmax(np.abs(out[ok] - s[ok])) < 0.4
     assert np.isnan(out[:50]).all()
+
+
+def test_lane_distance_gates_the_page_but_not_the_follow_up():
+    samples = [[1950 - 9 * k, 1250 - 2.5 * k, -9.0, -2.5] for k in range(60)]  # a lane from (1950,1250)
+    field = lane.build_field((1920, 2048), samples)
+    assert lane.lane_px(field, 1950, 1250, 1920) == 0.0
+    assert lane.lane_px(field, 1600, 1153, 1920) < 5.0  # on the lane, between samples 9 px apart
+    assert lane.lane_px(field, 1645, 609, 1920) > 400  # the 2026-10-17 04:02 stray-light ghost
+    assert lane.MATCH_PX == 150
+    from kreutz import notify
+    track = [{"time": "2026-10-17T03:15:25", "x": 1645.0, "y": 609.0, "vx": -3.5, "vy": 0.5}]
+    far = {"track": track, "other_instruments": [], "lane_px": 435, "near_lane": False}
+    assert notify.compose(far, "a.json") is None  # a candidate off the lane doesn't page
+    title, lines, prio, _ = notify.compose(dict(far, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")
+    assert prio == "urgent" and "435 px off the Kreutz lane" in lines[0]  # confirmed, it does, and says so
+    near = dict(far, lane_px=12, near_lane=True)
+    assert notify.compose(near, "a.json")[0] == "kreutz: candidate, UNREPORTED"
+    assert notify.compose({"track": track, "other_instruments": []}, "a.json")[2] == "high"  # older file: pages
+    pend = {"alert": "/data/live/alerts/20261017T0345_1645_609.json", "misses": 0, "track": track,
+            "points": [], "t": datetime(2026, 10, 17, 3, 45, 25), "x": 1645.0, "y": 609.0, "vx": -3.5, "vy": 0.5,
+            "known": None, "others": [], "lane_px": 435, "near_lane": False}
+    f, = live.status([], [pend], datetime(2026, 10, 17, 3, 45, 25), [], datetime(2026, 10, 17, 4, 0))["following"]
+    assert f["stage"] == "candidate" and f["near_lane"] is False and f["lane_px"] == 435

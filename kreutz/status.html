@@ -116,7 +116,8 @@ function card(f, s) {
       <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
         · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
-        ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}</div>
+        ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}
+        ${f.near_lane === false ? `· ${f.lane_px} px off the lane, not paged` : ''}</div>
       <code class="cmd">docker compose run --rm kreutz kreutz.report /data/live/${esc(f.alert)}</code>
     </div></div>`;
 }

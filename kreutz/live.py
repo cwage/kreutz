@@ -44,7 +44,13 @@ time+lane"; the alert for anything else lists such reports as a hint.
 
 --notify CMD runs CMD with the alert's .json path appended, e.g.
 --notify "python -m kreutz.notify" to post to an ntfy topic (notify.py);
-it's the command's job to be quiet about known comets.
+it's the command's job to be quiet about known comets, and about
+candidates far from the lane: the alert file carries "lane_px", the
+distance to the nearest archived Kreutz track, and "near_lane", whether
+that's within lane.MATCH_PX. A far candidate is searched, followed,
+pictured and listed like any other, just not paged until it's confirmed;
+every real alert so far was within 50 px of the lane and most false ones
+hundreds of px out.
 --render makes a confirmed object's cutouts and pictures (render.py,
 style.py) in the background under data/render/<alert name>/, and again
 every RENDER_EVERY frames while the object is still in view, so the
@@ -74,7 +80,7 @@ from PIL import Image
 from . import DATA
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
-from .lane import build_field, in_lane, off_flow
+from .lane import MATCH_PX, build_field, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, fit, measure
@@ -413,7 +419,8 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             path = f["alert"].replace(".json", ".confirmed.json")
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
                        "frames": len(f["points"]), "other_instruments": f["others"],
-                       "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds")},
+                       "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds"),
+                       "lane_px": f.get("lane_px"), "near_lane": f.get("near_lane")},
                       open(path, "w"), indent=1)
             log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
                 known=f.get("known"))
@@ -581,6 +588,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "first": f["track"][0]["time"], "last_seen": f["t"].isoformat(timespec="seconds"),
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
+            "lane_px": f.get("lane_px"), "near_lane": f.get("near_lane"),
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
             "pictures": rendered(name), "rendering": rendering(f)})
@@ -765,10 +773,12 @@ def main():
                     # measured and pictured like any other; only the log
                     # kind and the notification differ.
                     stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
+                    px = round(lane_px(field, c["x"], c["y"], seq.shape[0]))
+                    near = px <= MATCH_PX
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
-                         "known": known_rep}, indent=1))
+                         "known": known_rep, "lane_px": px, "near_lane": near}, indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
                     except Exception as e:
@@ -781,17 +791,19 @@ def main():
                               f"already reported ({who(known_rep)}, by {known_rep['how']})", file=sys.stderr)
                     else:
                         remember(c, f"alert: {stem.name}")
+                        quiet = None if near else f"{px} px off the lane, not paged"
                         log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
-                            reports_checked=reps is not None, others=others)
+                            reports_checked=reps is not None, others=others, lane_px=px, paged=near,
+                            note=quiet)
                         hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
                             if others else ""
-                        print(f"ALERT {stem}{hint}", flush=True)
+                        print(f"ALERT {stem}{' (' + quiet + ')' if quiet else ''}{hint}", flush=True)
                     # follow it for a confirmed notification; start from what's
                     # measurable already
                     pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
-                                    "vx": c["vx"], "vy": c["vy"], "misses": 0,
+                                    "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px, "near_lane": near,
                                     "decided_utc": now_utc.isoformat(timespec="seconds")})
                     if args.notify:
                         try:

@@ -81,9 +81,18 @@ def _flow_at(field, rr, cc):
 # For deciding a track is a Kreutz-lane object (not for searching): within
 # MATCH_PX of a lane sample and moving within MATCH_DV of the samples'
 # flow there. Looser than the search band because the lane shifts through
-# the season and the samples cover Aug-Oct 2026.
+# the season and the samples cover Aug-Oct 2026. MATCH_PX is also how far
+# from the lane a live candidate may be and still page: every real alert
+# since 2026-10-08 was within 50 px of a sample and every October report
+# on Sungrazer starts within 150 px, while 22 of the 28 false alerts were
+# farther out (stray-light ghosts, lines and corner noise).
 MATCH_PX = 150
 MATCH_DV = 3.0
+
+
+def lane_px(field, x, y, H):
+    """How far a report position is from the nearest lane sample, in px."""
+    return float(field.tree.query([H - 1 - y, x], k=1)[0])
 
 
 def in_lane(field, x, y, vx, vy, H):
