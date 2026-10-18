@@ -394,7 +394,7 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
                 keep.append(f)
             elif f.get("confirmed"):
-                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]))
+                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]), known=f.get("known"))
                 if render and not rendering(f):
                     start_render(f)  # the whole passage
             else:

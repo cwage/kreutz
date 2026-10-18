@@ -141,13 +141,17 @@ function group(recent) {
 
 function row(hist) {
   const last = hist.at(-1), first = hist[0];
+  // the report it's matched to: on its latest entry, else on any earlier
+  // one (an older 'ended' entry carries no match, and the live report feed
+  // may be down when the page is written)
+  const matched = last.report || [...hist].reverse().map(r => r.report).find(Boolean) || null;
   // noise that faded, or a star, isn't 'unreported'; only a real match is worth a badge
-  const report = JUNK.includes(last.kind) && !last.report ? '' : reportBadge(last.report);
+  const report = JUNK.includes(last.kind) && !matched ? '' : reportBadge(matched);
   // when it was found and confirmed: on the record itself (from the alert
   // files), else from whatever of its history is in the window
   const found = last.found_utc || (hist.find(r => ['alert', 'reported'].includes(r.kind)) || {}).decided_utc;
   const confirmed = last.confirmed_utc || (hist.find(r => r.kind === 'confirmed') || {}).decided_utc;
-  const lead = report && last.report ? leadBadge(last.report, found, confirmed) : '';
+  const lead = report && matched ? leadBadge(matched, found, confirmed) : '';
   const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
               : last.kind === 'ended' ? ` after ${last.frames} frames`
               : last.note ? ` ${esc(last.note)}` : '';

@@ -484,3 +484,14 @@ def test_lane_distance_gates_the_page_but_not_the_follow_up():
             "known": None, "others": [], "lane_px": 435, "near_lane": False}
     f, = live.status([], [pend], datetime(2026, 10, 17, 3, 45, 25), [], datetime(2026, 10, 17, 4, 0))["following"]
     assert f["stage"] == "candidate" and f["near_lane"] is False and f["lane_px"] == 435
+
+
+def test_status_keeps_the_match_on_an_ended_object():
+    known = {"reporter": "Jiangao Ruan", "id": "report_jr_20261016011229", "telescope": "CCOR2",
+             "posted_utc": "2026-10-16T05:12:29Z", "kind": "Potential Comet", "how": "time+lane"}
+    ended = {"kind": "ended", "decided_utc": "2026-10-16T19:31:45", "first": "2026-10-16T09:30:25",
+             "last": "2026-10-16T19:00:25", "x": 1292.0, "y": 1050.0, "frames": 29, "known": known,
+             "alert": "/data/live/alerts/20261016T0930_1658_1165.json"}
+    s = live.status([], [], datetime(2026, 10, 16, 19, 30, 25), [ended], datetime(2026, 10, 16, 19, 35))
+    d, = s["recent"]
+    assert d["kind"] == "ended" and d["report"]["reporter"] == "Jiangao Ruan" and d["report"]["how"] == "time+lane"
