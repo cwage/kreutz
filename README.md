@@ -128,7 +128,7 @@ as off-lane if its motion runs more than 45 degrees from the Kreutz
 flow there, as a ghost if the same pixels rose and fell the same way at
 this time yesterday (the eclipse-season stray light comes back daily),
 and as a line if its brightest frame shows a streak rather than a point.
-Over the 53 alerts of 2026-10-05..18 those two caught 13 false ones and
+Over the 53 alerts of 2026-10-05..18 those two caught 14 false ones and
 none of the real comets. A follow-up whose measured frames don't lie on a line, don't
 move, or run against the lane is rejected instead of confirmed, and nothing
 is sent or rendered for it.
