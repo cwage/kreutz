@@ -495,3 +495,45 @@ def test_status_keeps_the_match_on_an_ended_object():
     s = live.status([], [], datetime(2026, 10, 16, 19, 30, 25), [ended], datetime(2026, 10, 16, 19, 35))
     d, = s["recent"]
     assert d["kind"] == "ended" and d["report"]["reporter"] == "Jiangao Ruan" and d["report"]["how"] == "time+lane"
+
+
+def test_tile_pads_a_crop_that_runs_off_the_frame():
+    img = np.arange(100 * 100, dtype=np.float32).reshape(100, 100)
+    t = live.tile(img, 5, 50)
+    assert t.shape == (81, 81) and np.isnan(t[0, 40]) and t[40, 40] == img[5, 50]
+    assert np.isnan(live.tile(img, 300, 300)).all()
+
+
+def test_extent_tells_a_line_from_a_point():
+    yy, xx = np.mgrid[-25:26, -25:26]
+    point = np.exp(-(yy ** 2 + xx ** 2) / (2 * 1.5 ** 2)) * 8
+    length, ratio = vet.extent(point, 25, 25)
+    assert length < vet.LINE_LEN and ratio < 1.5
+    line = np.exp(-((yy - 0.5 * xx) ** 2) / (2 * 1.2 ** 2)) * 6  # a streak across the box
+    length, ratio = vet.extent(line, 25, 25)
+    assert length > vet.LINE_LEN and ratio > vet.LINE_RATIO
+
+
+def test_ghost_verdict_needs_a_matching_profile_a_day_earlier():
+    # the 2026-10-17 03:45 ghost along its track and the same pixels on the 16th
+    now = {k: (v, 0.0, 0.0) for k, v in enumerate([1.5, 1.0, 4.9, 7.4, 7.5, 8.8, 8.6, 2.3])}
+    prev = {k: (v, 0.0, 0.0) for k, v in enumerate([1.1, 1.4, 5.2, 7.3, 7.3, 8.6, 8.7, 1.9])}
+    assert "same as 24 h earlier" in vet.ghost_verdict(now, prev)
+    noise = {k: (v, 0.0, 0.0) for k, v in enumerate([1.2, 2.0, 1.5, 0.9, 2.2, 1.7, 1.1, 1.6])}
+    assert vet.ghost_verdict(now, noise) is None  # a comet: nothing there a day earlier
+    assert vet.ghost_verdict(now, {k: prev[k] for k in range(4)}) is None  # too few frames to compare
+
+
+def test_confirmed_follow_up_reanchors_on_a_search_chain_and_says_where_it_was_lost():
+    t = datetime(2026, 10, 15, 6, 0, 25)
+    f = {"x": 1600.0, "y": 1180.0, "vx": -6.0, "vy": -2.5, "confirmed": True}
+    # the comet, 14 px ahead of where the drifting refit predicts it (1576,1170) 4 frames on
+    chains = [[{"time": t.isoformat(), "x": 1576.0 - 14, "y": 1170.0, "vx": -7.5, "vy": -2.5, "score": 9.0}]]
+    hit = live.reanchored(f, chains, t, 4)
+    assert hit is not None and hit[0][1] == 1562.0 and hit[1] == (-7.5, -2.5)
+    far = [[dict(chains[0][0], x=1500.0)]]
+    assert live.reanchored(f, far, t, 4) is None
+    sun = (962.0, 1006.0)  # (row, col)
+    assert live.where_lost(2020.0, 1200.0, (1920, 2048), sun) == "edge"  # at the right edge
+    assert live.where_lost(1450.0, 1050.0, (1920, 2048), sun) == "edge"  # inside the search's inner radius + margin
+    assert live.where_lost(1700.0, 1250.0, (1920, 2048), sun) == "lost"

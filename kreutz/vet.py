@@ -21,11 +21,13 @@ every comet heads left at 8.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, label
 
-from .frames import PSF_SIGMA, SURROUND_SIGMA, Sequence
+from .frames import (BG_FRAMES, BG_SKIP, CADENCE, PSF_SIGMA, STAR_FRAMES, SURROUND_SIGMA, Sequence,
+                     frame_paths)
 
 FOLLOW_FRAMES = 10
 FOLLOW_R = 4        # px around each prediction to look for the peak
@@ -99,3 +101,118 @@ def follow(seq: Sequence, last: int, x: float, y: float, vx: float, vy: float):
         vy = float(np.polyfit(t, [p[2] for p in pts], 1)[0])
     dr, dc = seq._displacement(last - 1, last)(H - 1 - y, x)
     return Motion(vx, vy, pts, float(dc), float(-dr))
+
+
+# Two more looks, both at the significance maps along the track, for the
+# artifacts that move just enough and in the right direction to pass the
+# motion checks.
+PROFILE_FRAMES = 12  # frames back from the alert's last, covering its linked windows
+PROFILE_R = 3        # px around each prediction to take the peak from
+
+
+def profile(seq: Sequence, last: int, x, y, vx, vy, n=PROFILE_FRAMES, r=PROFILE_R):
+    """{k: (peak sigma, x, y)} for the frames k = 0..n-1 steps before
+    `last` (by time, so a missing frame leaves a gap): the peak of the
+    significance map within r px of where a straight track through (x, y)
+    at (vx, vy) px/frame is k frames earlier, and where that peak is."""
+    H, W = seq.shape
+    out = {}
+    for i in range(last, -1, -1):
+        k = round((seq.times[last] - seq.times[i]) / CADENCE)
+        if k >= n:
+            break
+        px, py = x - vx * k, y - vy * k
+        r0, c0 = int(round(H - 1 - py)), int(round(px))
+        if not (r <= r0 < H - r and r <= c0 < W - r):
+            continue
+        win = np.nan_to_num(seq.significance(i)[r0 - r:r0 + r + 1, c0 - r:c0 + r + 1])
+        dr, dc = np.unravel_index(np.argmax(win), win.shape)
+        out[k] = (float(win[dr, dc]), float(c0 - r + dc), float(H - 1 - (r0 - r + dr)))
+    return out
+
+
+# A ghost: an eclipse-season stray-light feature fixed in the instrument's
+# frame, which comes back at the same pixels at the same time of day. The
+# one at (1665..1651, 607) peaked 8.7 then 7.3 then 5.2 sigma at 02:15,
+# 02:45 and 03:15 UT on 2026-10-16 and 8.6, 7.5, 4.9 on the 17th, and
+# alerted on the 17th; another at (1228,1565) peaked at 08:00 both days. A
+# comet is a day's travel away 24 h later, and nothing sits where it was.
+GHOST_LOOKBACK = timedelta(days=1)
+GHOST_MIN = 4.0    # a day earlier, the track's peak frame had to hold something this bright
+GHOST_CORR = 0.7   # and the two nights' per-frame profiles have to rise and fall together
+GHOST_FRAMES = 6   # frames the two profiles must share
+
+
+def same_as_yesterday(seq: Sequence, last: int, x, y, vx, vy, paths=frame_paths):
+    """Why the track looks like yesterday's at the same time of day, or
+    None: the per-frame profile along it now and along the same pixels 24 h
+    earlier, from the frames on disk, correlate and the earlier one has a
+    real peak. None too when there aren't frames enough a day back."""
+    t0 = seq.times[last] - GHOST_LOOKBACK
+    warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + 2)
+    ps = paths(t0 - warm - CADENCE * PROFILE_FRAMES, t0 + CADENCE / 2)
+    if not ps:
+        return None
+    prev_seq = Sequence(ps)
+    j = min(range(len(prev_seq.times)), key=lambda i: abs(prev_seq.times[i] - t0))
+    if abs(prev_seq.times[j] - t0) > CADENCE / 2:
+        return None
+    return ghost_verdict(profile(seq, last, x, y, vx, vy), profile(prev_seq, j, x, y, vx, vy))
+
+
+def ghost_verdict(now, prev):
+    """same_as_yesterday's test on two profiles (profile())."""
+    ks = sorted(set(now) & set(prev))
+    if len(ks) < GHOST_FRAMES:
+        return None
+    a, b = np.array([now[k][0] for k in ks]), np.array([prev[k][0] for k in ks])
+    if b.max() < GHOST_MIN or a.std() == 0 or b.std() == 0:
+        return None
+    corr = float(np.corrcoef(a, b)[0, 1])
+    if corr < GHOST_CORR:
+        return None
+    return f"same as 24 h earlier ({b.max():.1f} sigma there then, profiles correlate {corr:.2f})"
+
+
+# A line: a comet is a compact peak a few px across in the significance map,
+# where stray-light streaks and streamer rays run straight across it. The
+# 2026-10-17 07:45 alert was a streak crossing the field 05:15-06:45; the
+# 00:30 near-miss a radial ray brightening under the track.
+SHAPE_R = 25       # px around the peak looked at
+LINE_LEN = 15.0    # px: a component through the peak, above half of it, longer than this is a line
+LINE_RATIO = 4.0   # or more elongated than this
+
+
+def extent(sig, r0, c0):
+    """(length px, elongation) of the connected region of sig above half
+    of its value at (r0, c0) that contains (r0, c0): the length of a
+    uniform bar with the region's spread along its major axis, and the
+    ratio of its spreads along the two axes."""
+    peak = sig[r0, c0]
+    lab, _ = label(np.nan_to_num(sig) >= peak / 2)
+    rr, cc = np.nonzero(lab == lab[r0, c0])
+    if len(rr) < 3:
+        return float(len(rr)), 1.0
+    ev = np.sort(np.linalg.eigvalsh(np.cov(np.vstack([rr, cc]))))
+    major, minor = max(ev[1], 1e-6), max(ev[0], 1 / 12)  # a pixel's own spread is 1/12
+    return float(np.sqrt(12 * major)), float(np.sqrt(major / minor))
+
+
+def line_like(seq: Sequence, last: int, x, y, vx, vy):
+    """Why the track's brightest frame shows a line rather than a point,
+    or None."""
+    prof = profile(seq, last, x, y, vx, vy)
+    if not prof:
+        return None
+    k, (peak, px, py) = max(prof.items(), key=lambda kv: kv[1][0])
+    if peak < PEAK_SIGMA:
+        return None
+    i = next(i for i in range(last, -1, -1) if round((seq.times[last] - seq.times[i]) / CADENCE) == k)
+    H, W = seq.shape
+    r0, c0 = int(round(H - 1 - py)), int(round(px))
+    rs, cs = slice(max(r0 - SHAPE_R, 0), r0 + SHAPE_R + 1), slice(max(c0 - SHAPE_R, 0), c0 + SHAPE_R + 1)
+    length, ratio = extent(seq.significance(i)[rs, cs], r0 - rs.start, c0 - cs.start)
+    if length > LINE_LEN or ratio > LINE_RATIO:
+        return (f"a line, not a point: {length:.0f} px long, {ratio:.1f}:1, "
+                f"in the {seq.times[i]:%H:%M} frame")
+    return None

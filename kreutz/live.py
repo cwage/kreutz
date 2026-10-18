@@ -14,13 +14,17 @@ seen in five frames a second, "confirmed" file is written with the report
 block ready to paste into Sungrazer's form, and it keeps being followed
 until it's lost. A track that fires is vetted first (vet.py): followed
 back through the raw frames, it's dropped as a star if it moves with the
-star drift, as stationary if it doesn't move, and as off-lane if its
-motion runs more than lane.FLOW_ANGLE from the Kreutz flow there. A
+star drift, as stationary if it doesn't move, as off-lane if its
+motion runs more than lane.FLOW_ANGLE from the Kreutz flow there, as a
+ghost if the same pixels held the same rise and fall at this time
+yesterday (vet.same_as_yesterday: the eclipse-season stray light comes
+back daily), and as a line if its brightest frame shows a streak rather
+than a point (vet.line_like). A
 follow-up is rejected rather than confirmed when its measured frames
 don't lie on a line, don't move, or run against the lane; the
 eclipse-season glare feature that was confirmed on 2026-10-11 fails all
 three. Every outcome (alert, star, stationary, off-lane, already
-reported, confirmed, rejected, faded, ended) is appended to
+reported, confirmed, rejected, faded, ended, ghost, line) is appended to
 data/live/log.jsonl with the wall-clock time it was decided, which is
 what score.py turns into a table of leads and lags against the reports.
 
@@ -84,9 +88,9 @@ from .lane import MATCH_PX, build_field, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, fit, measure
-from .search import MAX_MISSING, consistent, search
+from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_ROWS, _known_by_position
-from .vet import STATIONARY, follow
+from .vet import STATIONARY, follow, line_like, same_as_yesterday
 
 FEED = "https://services.swpc.noaa.gov/products/ccor1/fits/"
 POLL_S = 120
@@ -330,6 +334,47 @@ def chained(f, chains, t, dt):
     return None
 
 
+REANCHOR_PX = 25.0  # a confirmed object's follow-up takes over a search chain this close to its prediction
+REANCHOR_DV = 2.0   # px/frame, and moving this much like it
+
+
+def reanchored(f, chains, t, dt):
+    """For a confirmed object the single-frame measurement and chained()
+    both missed: the newest candidate of a search chain within REANCHOR_PX
+    of the prediction and REANCHOR_DV of its motion, as a measured point,
+    with its velocity. The follow-up's velocity refit drifts in the
+    eclipse-season glare (6 px/frame where the comet of 2026-10-15 was
+    doing 9.5), its prediction falls behind, and it ended that comet at
+    07:16 while the search held it all day; the search's own position and
+    velocity put it back on."""
+    px, py = f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt
+    best = None
+    for ch in chains:
+        c = ch[-1]
+        d = np.hypot(c["x"] - px, c["y"] - py)
+        if datetime.fromisoformat(c["time"]) == t and d <= REANCHOR_PX \
+                and np.hypot(c["vx"] - f["vx"], c["vy"] - f["vy"]) <= REANCHOR_DV and (best is None or d < best[0]):
+            best = (d, c)
+    if best is None:
+        return None
+    c = best[1]
+    return (t, float(c["x"]), float(c["y"]), float(c["score"])), (float(c["vx"]), float(c["vy"]))
+
+
+EDGE_NEAR = 60  # px: an object lost this close to the frame's edge or the search's inner edge left the field
+
+
+def where_lost(x, y, shape, sun):
+    """'edge' when a follow-up's last position (report coords) is within
+    EDGE_NEAR of the frame's edge or of the search annulus' inner radius
+    around the Sun (row, col), else 'lost': the follow-up lost it in view."""
+    H, W = shape
+    sx, sy = sun[1], H - 1 - sun[0]
+    if min(x, y, W - 1 - x, H - 1 - y) <= EDGE_NEAR or np.hypot(x - sx, y - sy) <= R_MIN + EDGE_NEAR:
+        return "edge"
+    return "lost"
+
+
 def followed(c, t, pending):
     """Is candidate c at time t one of the objects already being followed?
     The follow-up knows where its comet is now, which the memory of where
@@ -389,12 +434,18 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
         if not pts:
             hit = chained(f, chains, seq.times[last], dt)
             pts = [hit] if hit else []
+        velocity = None
+        if not pts and f.get("confirmed"):
+            hit = reanchored(f, chains, seq.times[last], dt)
+            if hit:
+                pts, velocity = [hit[0]], hit[1]
         if not pts:
             f["misses"] += 1
             if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
                 keep.append(f)
             elif f.get("confirmed"):
-                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]), known=f.get("known"))
+                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]), known=f.get("known"),
+                    where=where_lost(f["x"], f["y"], seq.shape, seq.sun_rc()))
                 if render and not rendering(f):
                     start_render(f)  # the whole passage
             else:
@@ -404,7 +455,7 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
         f["points"].append(pts[-1])
         f["since_render"] = f.get("since_render", 0) + 1
         t, x, y, _ = pts[-1]
-        f["vx"], f["vy"] = (x - f["x"]) / dt, (y - f["y"]) / dt
+        f["vx"], f["vy"] = velocity or ((x - f["x"]) / dt, (y - f["y"]) / dt)
         f["t"], f["x"], f["y"] = t, x, y
         if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
             why = unlikely(f["points"], field, seq.shape[0] if field is not None else FRAME_ROWS)
@@ -447,6 +498,19 @@ def log(kind, track, decided, **extra):
         fh.write(json.dumps(rec) + "\n")
 
 
+def tile(img, r, c, half=40):
+    """The (2*half+1)-square crop of img centred on (r, c), NaN where it
+    runs off the frame. A plain slice with a negative start wraps around
+    and comes back empty, which failed the animation of every alert within
+    40 px of an edge (2026-10-15 01:30, (1544,1867))."""
+    out = np.full((2 * half + 1, 2 * half + 1), np.nan, np.float32)
+    r0, r1 = max(r - half, 0), min(r + half + 1, img.shape[0])
+    c0, c1 = max(c - half, 0), min(c + half + 1, img.shape[1])
+    if r0 < r1 and c0 < c1:
+        out[r0 - (r - half):r1 - (r - half), c0 - (c - half):c1 - (c - half)] = img[r0:r1, c0:c1]
+    return out
+
+
 def animation(seq, track, path):
     """Crops of the raw and significance frames along the track, as a GIF."""
     last = track[-1]
@@ -459,8 +523,8 @@ def animation(seq, track, path):
         r, c = int(round(r)), int(round(c))
         tiles = []
         for img, lo, hi in ((seq.raw(i), 1, 99.5), (seq.significance(i), 1, 99.7)):
-            crop = img[r - 40:r + 41, c - 40:c + 41]
-            v = np.nanpercentile(crop, [lo, hi])
+            crop = tile(img, r, c)
+            v = np.nanpercentile(crop, [lo, hi]) if np.isfinite(crop).any() else np.zeros(2)
             t = np.clip((np.nan_to_num(crop, nan=v[0]) - v[0]) / (v[1] - v[0] + 1e-30) * 255, 0, 255)
             t = np.flipud(t.astype(np.uint8))  # as displayed: north up
             t[40, 34:38] = t[40, 44:48] = 255  # tick marks either side of the prediction
@@ -602,6 +666,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "kind": r["kind"], "decided_utc": r["decided_utc"], "first": r["first"], "last": r["last"],
             "x": r["x"], "y": r["y"], "name": name, "gif": f"alerts/{name}.gif" if name else None,
             "known": known, "how": r.get("how"), "frames": r.get("frames"), "note": r.get("note"),
+            "where": r.get("where"),
             "found_utc": (files["alert"] or {}).get("decided_utc") or (r["decided_utc"] if r["kind"] in ("alert", "reported") else None),
             "confirmed_utc": (files["confirmed"] or {}).get("decided_utc"),
             "report": with_url(best_report(known, track, reps, held=r["kind"] in ("confirmed", "ended"))),
@@ -759,6 +824,24 @@ def main():
                         remember(c, f"auto: {why}")
                         log("off-lane", ch, now_utc, note=why)
                         print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is {why}", file=sys.stderr)
+                        continue
+                    # what the significance maps say: the same thing was here
+                    # at this time yesterday (a stray-light ghost), or it's a
+                    # line rather than a point
+                    vetoed = False
+                    for kind, check in (("ghost", same_as_yesterday), ("line", line_like)):
+                        try:
+                            why = check(seq, last, c["x"], c["y"], c["vx"], c["vy"])
+                        except Exception as e:  # a check that can't run mustn't hold up an alert
+                            print(f"{t:%H:%M} {kind} check failed: {e}", file=sys.stderr)
+                            why = None
+                        if why:
+                            remember(c, f"auto: {why}")
+                            log(kind, ch, now_utc, note=why)
+                            print(f"{t:%H:%M} track at ({c['x']:.0f},{c['y']:.0f}) is {why}", file=sys.stderr)
+                            vetoed = True
+                            break
+                    if vetoed:
                         continue
                     reps = latest_reports() or reps
                     reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
