@@ -525,14 +525,25 @@ def test_ghost_verdict_needs_a_matching_profile_a_day_earlier():
 
 
 def test_confirmed_follow_up_reanchors_on_a_search_chain_and_says_where_it_was_lost():
-    t = datetime(2026, 10, 15, 6, 0, 25)
-    f = {"x": 1600.0, "y": 1180.0, "vx": -6.0, "vy": -2.5, "confirmed": True}
-    # the comet, 14 px ahead of where the drifting refit predicts it (1576,1170) 4 frames on
-    chains = [[{"time": t.isoformat(), "x": 1576.0 - 14, "y": 1170.0, "vx": -7.5, "vy": -2.5, "score": 9.0}]]
+    # the 2026-10-15 comet: measured at 9.5 px/frame for ten frames, then the
+    # follow-up's step refit drifted to 6 px/frame and it missed four frames
+    t0 = datetime(2026, 10, 15, 1, 0, 25)
+    pts = [(t0 + timedelta(minutes=15 * k), 1943.0 - 9.5 * k, 1286.0 - 2.5 * k, 6.0) for k in range(10)]
+    f = {"x": pts[-1][1], "y": pts[-1][2], "vx": -6.0, "vy": -2.5, "confirmed": True, "points": pts}
+    t = t0 + timedelta(minutes=15 * 13)
+    true_x, true_y = 1943.0 - 9.5 * 13, 1286.0 - 2.5 * 13
+    chains = [[{"time": t.isoformat(), "x": true_x + 2, "y": true_y - 1, "vx": -9.5, "vy": -2.5, "score": 9.0}]]
     hit = live.reanchored(f, chains, t, 4)
-    assert hit is not None and hit[0][1] == 1562.0 and hit[1] == (-7.5, -2.5)
-    far = [[dict(chains[0][0], x=1500.0)]]
+    assert hit is not None and hit[0][1] == true_x + 2 and hit[1] == (-9.5, -2.5)
+    # something else nearby, moving its own way, isn't taken
+    other = [[dict(chains[0][0], vx=-3.0, vy=1.0)]]
+    assert live.reanchored(f, other, t, 4) is None
+    far = [[dict(chains[0][0], x=true_x - 60)]]
     assert live.reanchored(f, far, t, 4) is None
+    # with too few points to fit, the latest step predicts
+    g = {"x": 1600.0, "y": 1180.0, "vx": -6.0, "vy": -2.5, "confirmed": True, "points": []}
+    near = [[{"time": t.isoformat(), "x": 1562.0, "y": 1170.0, "vx": -7.5, "vy": -2.5, "score": 9.0}]]
+    assert live.reanchored(g, near, t, 4) is not None
     sun = (962.0, 1006.0)  # (row, col)
     assert live.where_lost(2020.0, 1200.0, (1920, 2048), sun) == "edge"  # at the right edge
     assert live.where_lost(1450.0, 1050.0, (1920, 2048), sun) == "edge"  # inside the search's inner radius + margin

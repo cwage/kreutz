@@ -336,24 +336,35 @@ def chained(f, chains, t, dt):
 
 REANCHOR_PX = 25.0  # a confirmed object's follow-up takes over a search chain this close to its prediction
 REANCHOR_DV = 2.0   # px/frame, and moving this much like it
+REANCHOR_FIT = 3    # measured points needed to predict from their fit rather than the latest step
 
 
 def reanchored(f, chains, t, dt):
     """For a confirmed object the single-frame measurement and chained()
     both missed: the newest candidate of a search chain within REANCHOR_PX
-    of the prediction and REANCHOR_DV of its motion, as a measured point,
-    with its velocity. The follow-up's velocity refit drifts in the
+    of where the object should be and REANCHOR_DV of its motion, as a
+    measured point, with its velocity. Where and how fast it should be come
+    from a straight line through all the follow-up's measured points, not
+    from its latest frame-to-frame step: that step is what drifts in the
     eclipse-season glare (6 px/frame where the comet of 2026-10-15 was
-    doing 9.5), its prediction falls behind, and it ended that comet at
-    07:16 while the search held it all day; the search's own position and
-    velocity put it back on."""
-    px, py = f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt
+    doing 9.5), so a prediction from it falls behind, and the follow-up
+    ended that comet at 07:16 while the search held it all day."""
+    pts = f.get("points") or []
+    if len(pts) >= REANCHOR_FIT:
+        vx, vy, _ = fit(pts)
+        k = (t - pts[0][0]) / FRAME
+        ks = np.array([(p[0] - pts[0][0]) / FRAME for p in pts])
+        px = float(np.mean([p[1] for p in pts]) + vx * (k - ks.mean()))
+        py = float(np.mean([p[2] for p in pts]) + vy * (k - ks.mean()))
+    else:
+        vx, vy = f["vx"], f["vy"]
+        px, py = f["x"] + vx * dt, f["y"] + vy * dt
     best = None
     for ch in chains:
         c = ch[-1]
         d = np.hypot(c["x"] - px, c["y"] - py)
         if datetime.fromisoformat(c["time"]) == t and d <= REANCHOR_PX \
-                and np.hypot(c["vx"] - f["vx"], c["vy"] - f["vy"]) <= REANCHOR_DV and (best is None or d < best[0]):
+                and np.hypot(c["vx"] - vx, c["vy"] - vy) <= REANCHOR_DV and (best is None or d < best[0]):
             best = (d, c)
     if best is None:
         return None
