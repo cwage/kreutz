@@ -124,8 +124,13 @@ function card(f, s) {
 
 const LABEL = {alert: 'candidate', confirmed: 'confirmed', reported: 'already reported',
                star: 'a star', stationary: 'not moving', 'off-lane': 'off the lane',
-               rejected: 'rejected', faded: 'faded', ended: 'left the field'};
-const JUNK = ['star', 'stationary', 'off-lane', 'rejected', 'faded'];  // never 'unreported'
+               ghost: 'yesterday\'s ghost', line: 'a line, not a point',
+               rejected: 'rejected', faded: 'faded', ended: 'ended'};
+// an ended object either left the field or was lost by the follow-up in
+// view; older entries don't say which
+const label = r => r.kind !== 'ended' ? (LABEL[r.kind] || r.kind)
+  : r.where === 'edge' ? 'left the field' : r.where === 'lost' ? 'lost by the follow-up' : 'ended';
+const JUNK = ['star', 'stationary', 'off-lane', 'ghost', 'line', 'rejected', 'faded'];  // never 'unreported'
 const STYLE = {alert: 'candidate', confirmed: 'confirmed', reported: 'known'};
 
 // One row per object: its decisions in the log, oldest first.
@@ -155,12 +160,12 @@ function row(hist) {
   const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
               : last.kind === 'ended' ? ` after ${last.frames} frames`
               : last.note ? ` ${esc(last.note)}` : '';
-  const timeline = hist.map(r => `${LABEL[r.kind] || r.kind} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
+  const timeline = hist.map(r => `${label(r)} ${hhmm(r.decided_utc).slice(6, 11)}`).join(' → ');
   const pic = last.pictures ? last.pictures.preview : last.gif;
   const stamp = last.pictures ? last.pictures.made_utc : last.decided_utc;
   return `<div class="row">
     ${pic ? `<img src="${bust(pic, stamp)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
-    <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${LABEL[last.kind] || last.kind}</span>${report}${lead}${extra}
+    <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${label(last)}</span>${report}${lead}${extra}
       <div class="meta">${timeline} UTC (${ago(last.decided_utc)}) · seen ${hhmm(first.first)} → ${hhmm(last.last)}
         at ${last.x.toFixed(0)},${last.y.toFixed(0)}${last.name ? ` · ${esc(last.name)}` : ''}</div>
     </div></div>`;
