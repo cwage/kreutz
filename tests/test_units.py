@@ -617,3 +617,15 @@ def test_status_and_pushes_name_the_instrument_and_its_live_directory():
         "KREUTZ_INSTRUMENT=ccor2 docker compose run --rm kreutz kreutz.report /data/live-ccor2/alerts/a.json"
     s = live.status([], [], datetime(2026, 10, 9, 11, 0, 25), [], datetime(2026, 10, 9, 12, 0))
     assert s["instrument"] == "CCOR-1" and s["measure_prefix"] == c1.measure_cmd("")
+
+
+def test_page_lists_every_instrument_and_redirects_old_pages(tmp_path):
+    from kreutz import page
+    (tmp_path / "live").mkdir()
+    page.write(tmp_path)
+    insts = json.load(open(tmp_path / "instruments.json"))
+    assert [(i["key"], i["live"]) for i in insts] == [("ccor1", "live"), ("ccor2", "live-ccor2")]
+    assert insts[1]["measure_prefix"].startswith("KREUTZ_INSTRUMENT=ccor2 ")
+    assert "instruments.json" in (tmp_path / "index.html").read_text()
+    assert "url=../index.html" in (tmp_path / "live" / "status.html").read_text()
+    assert not (tmp_path / "live-ccor2").exists()  # no watcher has run there: nothing made

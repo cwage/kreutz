@@ -81,7 +81,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 from PIL import Image
 
-from . import DATA
+from . import DATA, page
 from .instrument import CURRENT as INSTRUMENT
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
@@ -753,7 +753,7 @@ def main():
         ap.error("--keep-days must be at least 1")
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
-    shutil.copy(Path(__file__).with_name("status.html"), LIVE / "status.html")
+    page.write()  # the one status page over every instrument, data/index.html
     history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
     # done: windows searched; chains: open tracks, as in evaluate.tracks;
     # pending: alerted objects still being followed. Resumed from the last

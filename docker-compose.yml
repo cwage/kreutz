@@ -22,3 +22,15 @@ services:
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
+
+  # The status page (kreutz.page writes data/index.html) and everything it
+  # links to, read-only: http://localhost:8000/
+  web:
+    image: python:3.12-slim
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["python", "-m", "http.server", "-d", "/data", "8000"]
+    volumes:
+      - ./data:/data:ro
+    ports:
+      - "${KREUTZ_WEB_PORT:-8000}:8000"
+    restart: unless-stopped

@@ -38,11 +38,21 @@
                 padding: 2px 10px; cursor: pointer; font: inherit; font-size: 12px; }
   .bar button.on { background: var(--fg); color: #000; border-color: var(--fg); }
   .bar .x { margin-left: auto; }
+  .inst { background: none; color: var(--fg); border: 1px solid var(--dim); font-weight: 500; }
+  .watchers { margin: 6px 0 0; }
+  .watchers div { color: var(--dim); }
+  .watchers b { color: var(--fg); }
+  .watchers .down b { color: var(--dim); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips button { background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 999px;
+                  padding: 2px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  .chips button.on { background: var(--fg); color: #000; border-color: var(--fg); }
 </style>
 </head>
 <body>
 <h1>kreutz live</h1>
-<div class="meta" id="meta">loading status.json…</div>
+<div class="watchers" id="meta">loading instruments.json…</div>
+<div class="chips" id="chips"></div>
 
 <h2>Following</h2>
 <div class="following" id="following"></div>
@@ -104,21 +114,21 @@ const opener = name => `role="button" tabindex="0" onclick="openBox('${esc(name)
   + `onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBox('${esc(name)}'); }"`;
 
 // A followed object: laid out like a decided one, picture left, text right.
-function card(f, s) {
+function card(f) {
   const stage = f.stage === 'confirmed'
     ? `<span class="badge confirmed">confirmed, ${f.points} frames</span>`
     : `<span class="badge candidate">candidate, ${f.points} frame${f.points === 1 ? '' : 's'} measured</span>`;
   const pic = f.pictures ? bust(f.pictures.preview, f.pictures.made_utc) : bust(f.gif, f.first);
   const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
   return `<div class="row">
-    <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f.name)}>
-    <div>${stage}${reportBadge(f.report)}${leadBadge(f.report, f.decided_utc, f.confirmed_utc)}
+    <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f._key)}>
+    <div>${instBadge(f)}${stage}${reportBadge(f.report)}${leadBadge(f.report, f.decided_utc, f.confirmed_utc)}
       <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
         · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
         ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}
         ${f.near_lane === false ? `· ${f.lane_px} px off the lane, not paged` : ''}</div>
-      <code class="cmd">${esc(s.measure_prefix || 'docker compose run --rm kreutz kreutz.report /data/live/')}${esc(f.alert)}</code>
+      <code class="cmd">${esc(f._inst.measure_prefix)}${esc(f.alert)}</code>
     </div></div>`;
 }
 
@@ -137,7 +147,7 @@ const STYLE = {alert: 'candidate', confirmed: 'confirmed', reported: 'known'};
 function group(recent) {
   const by = new Map();
   for (const r of recent) {
-    const key = r.name || `${r.kind}@${r.decided_utc}`;
+    const key = `${r._inst.key}:${r.name || `${r.kind}@${r.decided_utc}`}`;
     if (!by.has(key)) by.set(key, []);
     by.get(key).unshift(r);  // recent is newest-first; keep each history oldest-first
   }
@@ -164,8 +174,8 @@ function row(hist) {
   const pic = last.pictures ? last.pictures.preview : last.gif;
   const stamp = last.pictures ? last.pictures.made_utc : last.decided_utc;
   return `<div class="row">
-    ${pic ? `<img src="${bust(pic, stamp)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last.name)}>` : ''}
-    <div><span class="badge ${STYLE[last.kind] || 'quiet'}">${label(last)}</span>${report}${lead}${extra}
+    ${pic ? `<img src="${bust(pic, stamp)}" alt="pictures of ${esc(last.name)}" loading="lazy" ${opener(last._key)}>` : ''}
+    <div>${instBadge(last)}<span class="badge ${STYLE[last.kind] || 'quiet'}">${label(last)}</span>${report}${lead}${extra}
       <div class="meta">${timeline} UTC (${ago(last.decided_utc)}) · seen ${hhmm(first.first)} → ${hhmm(last.last)}
         at ${last.x.toFixed(0)},${last.y.toFixed(0)}${last.name ? ` · ${esc(last.name)}` : ''}</div>
     </div></div>`;
@@ -202,7 +212,7 @@ function drawBox() {
   }
   const src = pictureFor(o, boxState.view, boxState.style);
   const btn = (key, val, on) => `<button class="${on ? 'on' : ''}" onclick="pick('${key}', '${val}')">${val}</button>`;
-  document.getElementById('box-name').textContent = o.name;
+  document.getElementById('box-name').textContent = `${o._inst.label} · ${o.name}`;
   document.getElementById('box-views').innerHTML =
     views.map(v => btn('view', v, v === boxState.view)).join('');
   document.getElementById('box-styles').innerHTML =
@@ -215,29 +225,92 @@ function drawBox() {
 function pick(key, val) { boxState[key] = val; drawBox(); }
 document.getElementById('box').addEventListener('close', () => history.replaceState(null, '', ' '));
 
+// Every instrument's watcher, from instruments.json (kreutz.page): each
+// has its own live directory, and paths in its status.json are relative
+// to that directory, so they're rebased here onto this page's.
+const instBadge = o => SHOWN.length > 1 ? `<span class="badge inst">${esc(o._inst.label)}</span>` : '';
+let SHOWN = [];
+let only = null;
+try { only = localStorage.getItem('only'); } catch (e) {}
+
+function rebase(o, inst) {
+  const at = p => p ? `${inst.live}/${p}` : p;
+  const out = {...o, _inst: inst, _key: `${inst.key}:${o.name}`, gif: at(o.gif)};
+  if (o.pictures) {
+    const styles = {};
+    for (const [k, v] of Object.entries(o.pictures.styles || {})) {
+      styles[k] = Object.fromEntries(Object.entries(v).map(([view, path]) => [view, at(path)]));
+    }
+    out.pictures = {...o.pictures, preview: at(o.pictures.preview), styles};
+  }
+  return out;
+}
+
+function watcherLine(inst, s, err) {
+  if (!s) return `<div class="down"><b>${esc(inst.label)}</b> · no watcher (${esc(err)})</div>`;
+  const stale = (Date.now() - Date.parse(s.updated_utc + 'Z')) > 45 * 60000;
+  return `<div><b>${esc(inst.label)}</b> · window ${hhmm(s.window_utc)} · updated ${ago(s.updated_utc)}${stale ? ' <b>(stale: is the watcher running?)</b>' : ''}
+    · ${s.open} open chain(s)${s.longest ? `, longest ${s.longest} window(s) at ${s.longest_at[0].toFixed(0)},${s.longest_at[1].toFixed(0)}` : ''}</div>`;
+}
+
+function setOnly(key) {
+  only = key;
+  try { key ? localStorage.setItem('only', key) : localStorage.removeItem('only'); } catch (e) {}
+  refresh();
+}
+
 async function refresh() {
-  let s;
+  let insts;
   try {
-    s = await (await fetch('status.json', {cache: 'no-store'})).json();
-    if (s.instrument) { document.title = `kreutz live · ${s.instrument}`; document.querySelector('h1').textContent = `kreutz live · ${s.instrument}`; }
+    insts = await (await fetch('instruments.json', {cache: 'no-store'})).json();
   } catch (e) {
-    document.getElementById('meta').textContent = `status.json not readable: ${e}`;
+    document.getElementById('meta').textContent = `instruments.json not readable (run kreutz.page): ${e}`;
     return;
   }
-  objects = {};
-  for (const f of s.following) objects[f.name] = {...f, stamp: f.pictures ? f.pictures.made_utc : s.updated_utc};
-  for (const r of s.recent) if (r.name && !objects[r.name]) objects[r.name] = {...r, stamp: r.pictures ? r.pictures.made_utc : r.decided_utc};
-  const stale = (Date.now() - Date.parse(s.updated_utc + 'Z')) > 45 * 60000;
+  const got = await Promise.all(insts.map(async inst => {
+    try {
+      const r = await fetch(`${inst.live}/status.json`, {cache: 'no-store'});
+      if (!r.ok) return {inst, err: r.status === 404 ? 'not started' : `HTTP ${r.status}`};
+      return {inst, s: await r.json()};
+    } catch (e) {
+      return {inst, err: String(e)};
+    }
+  }));
+  const running = got.filter(g => g.s);
+  if (only && !running.some(g => g.inst.key === only)) only = null;
+  SHOWN = running.filter(g => !only || g.inst.key === only);
   document.getElementById('meta').innerHTML =
-    `window ${hhmm(s.window_utc)} · updated ${ago(s.updated_utc)}${stale ? ' <b>(stale: is the watcher running?)</b>' : ''}
-     · ${s.open} open chain(s)${s.longest ? `, longest ${s.longest} window(s) at ${s.longest_at[0].toFixed(0)},${s.longest_at[1].toFixed(0)}` : ''}
-     · chains under three windows are mostly noise and aren't shown`;
+    got.filter(g => g.s || !only).map(g => watcherLine(g.inst, g.s, g.err)).join('')
+    + '<div>chains under three windows are mostly noise and aren\'t shown</div>';
+  document.getElementById('chips').innerHTML = running.length > 1
+    ? [`<button class="${only ? '' : 'on'}" onclick="setOnly(null)">all</button>`,
+       ...running.map(g => `<button class="${only === g.inst.key ? 'on' : ''}" onclick="setOnly('${esc(g.inst.key)}')">${esc(g.inst.label)}</button>`)].join('')
+    : '';
+  const following = [], recent = [];
+  for (const {inst, s} of SHOWN) {
+    following.push(...s.following.map(f => rebase(f, inst)));
+    recent.push(...s.recent.map(r => rebase(r, inst)));
+  }
+  following.sort((a, b) => (b.last_seen || '').localeCompare(a.last_seen || ''));
+  recent.sort((a, b) => b.decided_utc.localeCompare(a.decided_utc));  // newest first, as one watcher writes it
+  objects = {};
+  const newest = SHOWN.map(g => g.s.updated_utc).sort().at(-1);
+  for (const f of following) objects[f._key] = {...f, stamp: f.pictures ? f.pictures.made_utc : newest};
+  for (const r of recent) if (r.name && !objects[r._key]) objects[r._key] = {...r, stamp: r.pictures ? r.pictures.made_utc : r.decided_utc};
   document.getElementById('following').innerHTML =
-    s.following.length ? s.following.map(f => card(f, s)).join('') : '<div class="empty">nothing being followed</div>';
+    following.length ? following.map(card).join('') : '<div class="empty">nothing being followed</div>';
   document.getElementById('recent').innerHTML =
-    s.recent.length ? group(s.recent).map(row).join('') : '<div class="empty">no decisions yet</div>';
+    recent.length ? group(recent).map(row).join('') : '<div class="empty">no decisions yet</div>';
+  const title = only ? `kreutz live · ${running.find(g => g.inst.key === only).inst.label}` : 'kreutz live';
+  document.title = title;
+  document.querySelector('h1').textContent = title;
   if (boxState.name) drawBox();
-  else if (location.hash.length > 1 && objects[location.hash.slice(1)]) openBox(location.hash.slice(1));
+  else if (location.hash.length > 1) {
+    // old links carry a bare name; find it under any instrument
+    const h = decodeURIComponent(location.hash.slice(1));
+    const key = objects[h] ? h : Object.keys(objects).find(k => k.endsWith(`:${h}`));
+    if (key) openBox(key);
+  }
 }
 refresh();
 setInterval(refresh, 60000);
