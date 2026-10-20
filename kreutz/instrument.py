@@ -43,6 +43,7 @@ class Instrument:
     swpc_canvas: bool    # reports measured on SWPC's derotated image can be converted (evaluate.py)
     second: int          # frames are stamped this many seconds past the quarter hour
     star_mask_r: int     # radius masked around confirmed stars in the significance map
+    passage: int         # hours a Kreutz comet stays in the field after it's found (live.PASSAGE)
 
     @property
     def frames_dir(self):
@@ -62,6 +63,16 @@ class Instrument:
         return "" if self.key == "ccor1" else f"-{self.key}"
 
     @property
+    def env(self):
+        """What a command needs in front of it to run on this instrument."""
+        return "" if self.key == "ccor1" else f"KREUTZ_INSTRUMENT={self.key} "
+
+    def measure_cmd(self, path):
+        """The kreutz.report command for an alert file, as the status page
+        and a push show it; `path` is relative to the live directory."""
+        return f"{self.env}docker compose run --rm kreutz kreutz.report /data/live{self.tag}/{path}"
+
+    @property
     def lane_samples(self):
         return Path(__file__).with_name(f"lane-samples{self.tag}.json")
 
@@ -71,7 +82,7 @@ INSTRUMENTS = {
                         "https://services.swpc.noaa.gov/products/ccor1/fits/",
                         "SWFO/GOES-19/CCOR-1/ccor1-l1b", False, False,
                         # see search.py: all 81 Kreutz tracks of Jul-Aug 2025
-                        460, 1250, 0, 75, (1005.7, 957.1), True, 25, 4),
+                        460, 1250, 0, 75, (1005.7, 957.1), True, 25, 4, 12),
     # The feed carries CCOR-2 at level 1A only, and NCEI's archive prefix
     # (SWFO/SWFO-L1/CCOR-2/) is empty as of 2026-10-20; the feed's ~30
     # days of frames are the only source. Outside the magnetosphere at L1
@@ -99,7 +110,10 @@ INSTRUMENTS = {
                         # after the star model (CCOR-1's leave nothing there):
                         # 14 of 22 unexplained tracks on 2026-10-16 were 7-12 px
                         # from a star.
-                        10),
+                        10,
+                        # The lane runs ~700 px at 3-10 px/frame (CCOR-1: ~700 at
+                        # 9-12), so about twice CCOR-1's passage.
+                        20),
 }
 
 _name = os.environ.get("KREUTZ_INSTRUMENT", "ccor1").lower()

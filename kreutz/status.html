@@ -70,7 +70,7 @@ const ago = iso => {
 };
 const link = (k, text) => k && k.url ? `<a href="${esc(k.url)}" target="_blank" rel="noopener">${text}</a>` : text;
 // The Sungrazer report that fits the object, as of the last snapshot: by
-// position (a CCOR-1 report), by time+lane (another coronagraph, decided at
+// position (a report from this instrument), by time+lane (another coronagraph, decided at
 // alert time), or by time alone, which is only likely the same object.
 const reportBadge = k => {
   if (!k) return `<span class="badge candidate">UNREPORTED</span>`;
@@ -118,7 +118,7 @@ function card(f, s) {
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
         ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}
         ${f.near_lane === false ? `· ${f.lane_px} px off the lane, not paged` : ''}</div>
-      <code class="cmd">docker compose run --rm kreutz kreutz.report /data/live/${esc(f.alert)}</code>
+      <code class="cmd">${esc(s.measure_prefix || 'docker compose run --rm kreutz kreutz.report /data/live/')}${esc(f.alert)}</code>
     </div></div>`;
 }
 
@@ -219,6 +219,7 @@ async function refresh() {
   let s;
   try {
     s = await (await fetch('status.json', {cache: 'no-store'})).json();
+    if (s.instrument) { document.title = `kreutz live · ${s.instrument}`; document.querySelector('h1').textContent = `kreutz live · ${s.instrument}`; }
   } catch (e) {
     document.getElementById('meta').textContent = `status.json not readable: ${e}`;
     return;

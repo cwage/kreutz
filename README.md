@@ -183,6 +183,9 @@ the last decisions. `data/live/status.html` is a static page over it:
 python -m http.server -d data 8000     # then http://localhost:8000/live/status.html
 ```
 
+The CCOR-2 watcher's page is `live-ccor2/status.html`; the heading, the
+measure commands and the push titles say which instrument they're about.
+
 Chains under three windows are mostly noise and appear only as a count.
 With `--keep-days N`, frames and significance maps more than N days old are
 deleted (about 1.6 GB a day otherwise accumulates); alerts, logs and renders
