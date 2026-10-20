@@ -1,6 +1,6 @@
 """Page an ntfy topic about a live alert: what, where, and the command to run.
 
-    docker compose run --rm kreutz kreutz.notify /data/live/alerts/<alert>.json
+    docker compose run --rm kreutz kreutz.notify /data/live/alerts/<alert>.json   (live-ccor2 with KREUTZ_INSTRUMENT=ccor2)
 
 Meant as the live watcher's --notify command:
 
@@ -25,6 +25,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from .instrument import CURRENT as INSTRUMENT
+
 
 def _send(server, topic, title, lines, priority, tags):
     headers = {"Title": title, "Priority": priority, "Tags": tags,
@@ -45,12 +47,13 @@ def compose(d, name):
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
     known = d.get("known") if isinstance(d, dict) else None
     confirmed = isinstance(d, dict) and d.get("kind") == "confirmed"
-    cmd = f"docker compose run --rm kreutz kreutz.report /data/live/alerts/{name}"
+    cmd = INSTRUMENT.measure_cmd(f"alerts/{name}")
+    who = f"kreutz {INSTRUMENT.label}"
     if known:
         if not confirmed:
             return None
         posted = known["posted_utc"].replace("T", " ")[:16]
-        return (f"kreutz: known comet, {known['reporter']}'s ({known['telescope']})",
+        return (f"{who}: known comet, {known['reporter']}'s ({known['telescope']})",
                 [f"Reported {posted} UTC, matched by {known['how']}; held {d['frames']} frames, {d['note']}.",
                  "Measure it anyway:", cmd], "low", "comet")
     far = isinstance(d, dict) and d.get("near_lane") is False
@@ -60,11 +63,11 @@ def compose(d, name):
     if far:
         hint += f"; {d['lane_px']} px off the Kreutz lane"
     if confirmed:
-        return ("kreutz: CONFIRMED, report ready" if not others else "kreutz: confirmed, likely known",
+        return (f"{who}: CONFIRMED, report ready" if not others else f"{who}: confirmed, likely known",
                 [f"Held {d['frames']} frames, {d['note']}; {hint}.", "Measure and get the form block:", cmd],
                 "urgent" if not others else "default", "comet,clipboard")
     speed = (c["vx"] ** 2 + c["vy"] ** 2) ** 0.5
-    return ("kreutz: candidate, UNREPORTED" if not others else "kreutz: candidate, likely known",
+    return (f"{who}: candidate, UNREPORTED" if not others else f"{who}: candidate, likely known",
             [f"Mover at ({c['x']:.0f},{c['y']:.0f}) {speed:.1f} px/frame, seen since "
              f"{track[0]['time'][11:16]} UTC; {hint}.", "Vet and measure:", cmd],
             "high" if not others else "default", "comet")

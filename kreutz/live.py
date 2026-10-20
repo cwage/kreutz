@@ -1,4 +1,4 @@
-"""Watch NOAA's real-time CCOR-1 feed and stop on the first candidate comet.
+"""Watch NOAA's real-time coronagraph feed and stop on the first candidate comet.
 
     docker compose run --rm kreutz kreutz.live [--threshold 5.5] [--link 3]
 
@@ -208,7 +208,7 @@ def lane_field():
 
 
 def reported_by(track, t, reps):
-    """The CCOR-1 report this track matches by position, if any, as
+    """The report from our instrument this track matches by position, if any, as
     {reporter, id, telescope, posted_utc, kind, how}. A match is the
     track passing through the report's points while they were measured,
     or along their path extrapolated as the archive's shortlist does:
@@ -228,7 +228,7 @@ def reported_by(track, t, reps):
 
 
 def recheck(pending, t, reps):
-    """Follow-ups not yet matched to a CCOR-1 report by position, matched
+    """Follow-ups not yet matched to one of our instrument's reports by position, matched
     now against the latest reports: a report of the comet we're following
     usually arrives hours after our alert."""
     for f in pending:
@@ -239,12 +239,12 @@ def recheck(pending, t, reps):
                 print(f"{t:%H:%M} {Path(f['alert']).stem} is {who(k)}, by position", file=sys.stderr)
 
 
-PASSAGE = timedelta(hours=12)  # a Kreutz comet stays in CCOR-1's field about this long after it's found
+PASSAGE = timedelta(hours=INSTRUMENT.passage)  # a Kreutz comet stays in the field about this long after it's found
 
 
 def matched_report(track, reps, held=False):
     """The report that fits a track, looked up after the fact (reports keep
-    arriving for hours after a decision): a CCOR-1 report by position, or,
+    arriving for hours after a decision): one of our instrument's reports by position, or,
     for an object that held (confirmed), the earliest Kreutz report from
     another instrument observed between a day before the track and the end
     of its crossing, which is only 'likely' the same object (how: "time").
@@ -302,7 +302,7 @@ def start_render(f):
     ahead = max(24, len(f["points"]) + RENDER_LOST)
     cmd = (f"python -m kreutz.render {c['time'][:16]} {c['x']} {c['y']} {c['vx']} {c['vy']} "
            f"--back 24 --ahead {ahead} --lost {RENDER_LOST} --name {name} "
-           f"&& python -m kreutz.style /data/render/{name} --all")
+           f"&& python -m kreutz.style /data/render{INSTRUMENT.tag}/{name} --all")
     f["render_proc"] = subprocess.Popen(["sh", "-c", cmd], cwd="/srv",
                                         stdout=open(LIVE / "alerts" / f"{name}.render.log", "w"),
                                         stderr=subprocess.STDOUT)
@@ -626,15 +626,15 @@ STATUS_REPORTS_EVERY = timedelta(hours=1)  # how often the page's after-the-fact
 
 def pictures(name, root=None):
     """A render's pictures for the status page, as paths relative to
-    data/live/: the plain preview and each style preset's crop, field and
+    the live directory: the plain preview and each style preset's crop, field and
     still, whichever exist; None without a render."""
     d = (root or DATA / f"render{INSTRUMENT.tag}") / name
     if not (d / "preview.gif").exists():
         return None
-    out = {"preview": f"../render/{name}/preview.gif", "styles": {}}
+    out = {"preview": f"../render{INSTRUMENT.tag}/{name}/preview.gif", "styles": {}}
     files = [d / "preview.gif"]
     for sd in sorted(d.glob("style-*")):
-        have = {k: f"../render/{name}/{sd.name}/{f}" for k, f in
+        have = {k: f"../render{INSTRUMENT.tag}/{name}/{sd.name}/{f}" for k, f in
                 (("crop", "crop.gif"), ("field", "field.gif"), ("still", "still.png")) if (sd / f).exists()}
         if have:
             out["styles"][sd.name[len("style-"):]] = have
@@ -649,7 +649,8 @@ def pictures(name, root=None):
 def status(chains, pending, t, recent, now, rendered=lambda name: None,
            files_of=lambda name: {"alert": None, "confirmed": None}, reps=None):
     """The status page's data: what's open, what's being followed and at
-    which stage, and the last decisions. Paths are relative to data/live/.
+    which stage, and the last decisions. Paths are relative to the live
+    directory; "measure_prefix" + an object's "alert" is its kreutz.report command.
     Each object's "report" is the Sungrazer report that fits it as of now
     (best_report): a match by position, from when it was decided or found
     now in reps, else the guess by time it was filed under.
@@ -704,7 +705,8 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "confirmed_utc": (files["confirmed"] or {}).get("decided_utc"),
             "report": with_url(best_report(known, track, reps, held=r["kind"] in ("confirmed", "ended"))),
             "pictures": rendered(name) if name else None})
-    return {"updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
+    return {"instrument": INSTRUMENT.label, "measure_prefix": INSTRUMENT.measure_cmd(""),
+            "updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
             "open": len(chains), "longest": len(longest) if longest else 0,
             "longest_at": [longest[-1]["x"], longest[-1]["y"]] if longest else None,
             "following": following, "recent": decisions}

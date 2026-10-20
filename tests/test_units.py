@@ -193,10 +193,10 @@ def test_notify_is_quiet_about_known_comets():
     assert prio == "low" and "Jiangao Ruan" in title and "2026-10-09 11:48 UTC" in lines[0]
     assert lines[-1].endswith("kreutz.report /data/live/alerts/a.confirmed.json")
     title, _, prio, _ = notify.compose({"track": track, "other_instruments": []}, "a.json")
-    assert (title, prio) == ("kreutz: candidate, UNREPORTED", "high")
+    assert (title, prio) == ("kreutz CCOR-1: candidate, UNREPORTED", "high")
     title, _, prio, _ = notify.compose({"kind": "confirmed", "track": track, "other_instruments": [],
                                         "frames": 5, "note": "ok"}, "a.confirmed.json")
-    assert (title, prio) == ("kreutz: CONFIRMED, report ready", "urgent")
+    assert (title, prio) == ("kreutz CCOR-1: CONFIRMED, report ready", "urgent")
 
 
 def test_seen_extends_the_track_to_the_last_measurement():
@@ -477,7 +477,7 @@ def test_lane_distance_gates_the_page_but_not_the_follow_up():
     title, lines, prio, _ = notify.compose(dict(far, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")
     assert prio == "urgent" and "435 px off the Kreutz lane" in lines[0]  # confirmed, it does, and says so
     near = dict(far, lane_px=12, near_lane=True)
-    assert notify.compose(near, "a.json")[0] == "kreutz: candidate, UNREPORTED"
+    assert notify.compose(near, "a.json")[0] == "kreutz CCOR-1: candidate, UNREPORTED"
     assert notify.compose({"track": track, "other_instruments": []}, "a.json")[2] == "high"  # older file: pages
     pend = {"alert": "/data/live/alerts/20261017T0345_1645_609.json", "misses": 0, "track": track,
             "points": [], "t": datetime(2026, 10, 17, 3, 45, 25), "x": 1645.0, "y": 609.0, "vx": -3.5, "vy": 0.5,
@@ -607,3 +607,13 @@ def test_fill_dark_fills_dark_spots_and_keeps_bright_points_and_nans():
     assert abs(out[31, 41] - 100) < 3 and abs(out[30, 40] - 100) < 3
     assert out[80, 80] == 160
     assert np.isnan(out[:5]).all() and np.isfinite(out[5:]).all()
+
+
+def test_status_and_pushes_name_the_instrument_and_its_live_directory():
+    from kreutz.instrument import INSTRUMENTS
+    c1, c2 = INSTRUMENTS["ccor1"], INSTRUMENTS["ccor2"]
+    assert c1.measure_cmd("alerts/a.json") == "docker compose run --rm kreutz kreutz.report /data/live/alerts/a.json"
+    assert c2.measure_cmd("alerts/a.json") == \
+        "KREUTZ_INSTRUMENT=ccor2 docker compose run --rm kreutz kreutz.report /data/live-ccor2/alerts/a.json"
+    s = live.status([], [], datetime(2026, 10, 9, 11, 0, 25), [], datetime(2026, 10, 9, 12, 0))
+    assert s["instrument"] == "CCOR-1" and s["measure_prefix"] == c1.measure_cmd("")
