@@ -112,6 +112,7 @@ Modules, each with usage in its docstring:
 | `kreutz.score` | table of the live alerts against the reports that appeared: our lead or lag |
 | `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
 | `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
+| `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html` |
 | `kreutz.sync` | pull everything on the SWPC feed to disk (CCOR-2, which the watcher can't run on yet; `--loop` to keep up) |
 | `kreutz.lanesamples` | lane samples for `lane.py` from archive runs: the windows of tracks matching the instrument's Kreutz reports |
 
@@ -177,14 +178,17 @@ and an object being followed keeps being measured and rendered.
 After every window the watcher rewrites `data/live/status.json`: open chains,
 what's being followed and at which stage (candidate at three windows,
 confirmed at five frames), whether and by whom it's already reported, and
-the last decisions. `data/live/status.html` is a static page over it:
+the last decisions (CCOR-2's watcher writes `data/live-ccor2/`). One static
+page, `data/index.html`, shows every instrument's watcher together: it
+reads `data/instruments.json` for the instruments and their live
+directories, then each one's `status.json`. Every object carries an
+instrument badge, and chips at the top narrow the page to one. The
+watchers write the page and the list when they start, and `kreutz.page`
+does it by hand. The old per-watcher `status.html` pages now redirect to it.
 
 ```
-python -m http.server -d data 8000     # then http://localhost:8000/live/status.html
+docker compose up -d web     # then http://localhost:8000/
 ```
-
-The CCOR-2 watcher's page is `live-ccor2/status.html`; the heading, the
-measure commands and the push titles say which instrument they're about.
 
 Chains under three windows are mostly noise and appear only as a count.
 With `--keep-days N`, frames and significance maps more than N days old are
