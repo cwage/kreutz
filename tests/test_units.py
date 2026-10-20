@@ -548,3 +548,21 @@ def test_confirmed_follow_up_reanchors_on_a_search_chain_and_says_where_it_was_l
     assert live.where_lost(2020.0, 1200.0, (1920, 2048), sun) == "edge"  # at the right edge
     assert live.where_lost(1450.0, 1050.0, (1920, 2048), sun) == "edge"  # inside the search's inner radius + margin
     assert live.where_lost(1700.0, 1250.0, (1920, 2048), sun) == "lost"
+
+
+def test_prediction_comes_from_the_recent_line_not_the_last_step():
+    # Stark's comet, 2026-10-20: 9 px/frame for an hour of frames, then one
+    # off-pointed frame turned the latest step into (-6,-4)
+    t0 = datetime(2026, 10, 20, 4, 0, 25)
+    pts = [(t0 + timedelta(minutes=15 * k), 1580.0 - 8.7 * k, 1208.0 - 3.2 * k, 40.0) for k in range(12)]
+    f = {"x": pts[-1][1], "y": pts[-1][2], "vx": -6.0, "vy": -4.0, "points": pts}
+    t = t0 + timedelta(minutes=15 * 17)
+    x, y, vx, vy = live.predicted(f, t, 6)
+    assert (x, y) == pytest.approx((1580.0 - 8.7 * 17, 1208.0 - 3.2 * 17), abs=0.01)
+    assert (vx, vy) == pytest.approx((-8.7, -3.2))
+    # only the latest FIT_RECENT points count: an early, slower stretch doesn't drag it
+    slow = [(t0 - timedelta(minutes=15 * (k + 1)), 1580.0 + 5.0 * (k + 1), 1208.0, 40.0) for k in range(30)][::-1]
+    x2, _, vx2, _ = live.predicted(dict(f, points=slow + pts), t, 6)
+    assert x2 == pytest.approx(x, abs=0.01) and vx2 == pytest.approx(-8.7)
+    # too few points: the latest step
+    assert live.predicted(dict(f, points=pts[:2]), t, 6)[:2] == (pts[-1][1] - 36.0, pts[-1][2] - 24.0)

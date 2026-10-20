@@ -337,6 +337,25 @@ def chained(f, chains, t, dt):
 REANCHOR_PX = 25.0  # a confirmed object's follow-up takes over a search chain this close to its prediction
 REANCHOR_DV = 2.0   # px/frame, and moving this much like it
 REANCHOR_FIT = 3    # measured points needed to predict from their fit rather than the latest step
+FIT_RECENT = 12     # the fit uses this many latest points: a comet speeds up, and a day-long line lags it
+
+
+def predicted(f, t, dt):
+    """Where a followed object should be at t and how fast it moves, (x, y,
+    vx, vy): from a straight line through its latest FIT_RECENT measured
+    points when it has REANCHOR_FIT of them, else its latest step. The
+    latest step is what the follow-up normally predicts from, and one bad
+    point throws it: the frame of 2026-10-20 07:00, taken off-pointed,
+    turned Stark's comet's 9 px/frame into 6, and the follow-up lost a
+    40-sigma comet that was where the line said it would be."""
+    pts = (f.get("points") or [])[-FIT_RECENT:]
+    if len(pts) < REANCHOR_FIT:
+        return f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt, f["vx"], f["vy"]
+    vx, vy, _ = fit(pts)
+    k = (t - pts[0][0]) / FRAME
+    ks = np.array([(p[0] - pts[0][0]) / FRAME for p in pts])
+    return (float(np.mean([p[1] for p in pts]) + vx * (k - ks.mean())),
+            float(np.mean([p[2] for p in pts]) + vy * (k - ks.mean())), vx, vy)
 
 
 def reanchored(f, chains, t, dt):
@@ -349,16 +368,7 @@ def reanchored(f, chains, t, dt):
     eclipse-season glare (6 px/frame where the comet of 2026-10-15 was
     doing 9.5), so a prediction from it falls behind, and the follow-up
     ended that comet at 07:16 while the search held it all day."""
-    pts = f.get("points") or []
-    if len(pts) >= REANCHOR_FIT:
-        vx, vy, _ = fit(pts)
-        k = (t - pts[0][0]) / FRAME
-        ks = np.array([(p[0] - pts[0][0]) / FRAME for p in pts])
-        px = float(np.mean([p[1] for p in pts]) + vx * (k - ks.mean()))
-        py = float(np.mean([p[2] for p in pts]) + vy * (k - ks.mean()))
-    else:
-        vx, vy = f["vx"], f["vy"]
-        px, py = f["x"] + vx * dt, f["y"] + vy * dt
+    px, py, vx, vy = predicted(f, t, dt)
     best = None
     for ch in chains:
         c = ch[-1]
@@ -447,9 +457,16 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             pts = [hit] if hit else []
         velocity = None
         if not pts and f.get("confirmed"):
-            hit = reanchored(f, chains, seq.times[last], dt)
-            if hit:
-                pts, velocity = [hit[0]], hit[1]
+            # where the line through its recent points says, rather than
+            # where its latest step says; then a search chain near there
+            px, py, vx, vy = predicted(f, seq.times[last], dt)
+            pts = measure(seq, last, px, py, vx, vy, back=0, ahead=0, lost=0)
+            if pts:
+                velocity = (vx, vy)
+            else:
+                hit = reanchored(f, chains, seq.times[last], dt)
+                if hit:
+                    pts, velocity = [hit[0]], hit[1]
         if not pts:
             f["misses"] += 1
             if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
