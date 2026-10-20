@@ -82,6 +82,7 @@ import numpy as np
 from PIL import Image
 
 from . import DATA
+from .instrument import CURRENT as INSTRUMENT
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
 from .lane import MATCH_PX, build_field, in_lane, lane_px, off_flow
@@ -92,7 +93,7 @@ from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_ROWS, _known_by_position
 from .vet import STATIONARY, follow, line_like, same_as_yesterday
 
-FEED = "https://services.swpc.noaa.gov/products/ccor1/fits/"
+FEED = INSTRUMENT.feed
 POLL_S = 120
 # Live alerts need a body that's clearly moving. The two false alerts of
 # 2026-10-06 08:30 were blips at 1.1 and 1.5 px/frame; 10 of 172 CCOR-1
@@ -101,7 +102,7 @@ POLL_S = 120
 # little later rather than missed. The archive search keeps search.SPEED_MIN
 # and leans on persist.py instead.
 LIVE_SPEED_MIN = 2.0
-LIVE = DATA / "live"
+LIVE = DATA / f"live{INSTRUMENT.tag}"
 PRUNE_EVERY = timedelta(hours=1)
 
 
@@ -116,11 +117,11 @@ def sync(since):
     (The feed directory keeps about three weeks of frames; only the recent
     hours matter here, and the archive fetcher is the way to get the rest.)
     Returns how many were new."""
-    names = sorted(set(re.findall(r'href="(CCOR1_1B_\d{8}T\d{6}_V\d+_NC\.fits)"',
-                                  _get(FEED).decode())))
+    from .sync import listing  # (sync imports this module)
+    names = sorted(listing())
     new = 0
     for n in names:
-        t = datetime.strptime(n[9:24], "%Y%m%dT%H%M%S")
+        t = datetime.strptime(INSTRUMENT.name_re.search(n).group(1), "%Y%m%dT%H%M%S")
         if t < since:
             continue
         dest = L1B / f"{t:%Y/%m/%d}" / n
@@ -136,12 +137,16 @@ def sync(since):
 
 def prune(keep_days, now, roots=None):
     """Delete the day directories (YYYY/MM/DD) of frames and significance
-    maps, under every settings key, whose whole day ended more than
+    maps, under every settings key of this instrument, whose whole day ended more than
     `keep_days` before `now`, and any month or year directories left empty.
     The date comes from the path, not file times (an archive-fetched frame
     is new on disk however old it is). Returns the directories removed."""
     if roots is None:
-        roots = [L1B] + (sorted(p for p in SIG_CACHE.iterdir() if p.is_dir())
+        # Cache keys are 'bg16...' for CCOR-1 and 'ccor2-bg16...' for CCOR-2:
+        # each watcher prunes its own instrument's maps only.
+        mine = (lambda p: not p.name.startswith("ccor")) if not INSTRUMENT.tag \
+            else (lambda p: p.name.startswith(INSTRUMENT.key + "-"))
+        roots = [L1B] + (sorted(p for p in SIG_CACHE.iterdir() if p.is_dir() and mine(p))
                          if SIG_CACHE.exists() else [])
     cutoff = now - timedelta(days=keep_days)
     gone = []
@@ -198,7 +203,7 @@ _FIELD = []
 def lane_field():
     """The Kreutz lane's flow field, built once."""
     if not _FIELD:
-        _FIELD.append(build_field((FRAME_ROWS, 2048)))
+        _FIELD.append(build_field((FRAME_ROWS, 2048)))  # lane.py: the instrument's samples
     return _FIELD[0]
 
 
@@ -623,7 +628,7 @@ def pictures(name, root=None):
     """A render's pictures for the status page, as paths relative to
     data/live/: the plain preview and each style preset's crop, field and
     still, whichever exist; None without a render."""
-    d = (root or DATA / "render") / name
+    d = (root or DATA / f"render{INSTRUMENT.tag}") / name
     if not (d / "preview.gif").exists():
         return None
     out = {"preview": f"../render/{name}/preview.gif", "styles": {}}

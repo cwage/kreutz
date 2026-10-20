@@ -1,4 +1,4 @@
-"""CCOR-1 L1b frames as background-subtracted significance maps.
+"""Coronagraph frames (instrument.CURRENT) as background-subtracted significance maps.
 
 Coordinates: arrays are (row, col) as stored in the FITS file. Sungrazer
 reports measure (x, y) with the origin at the upper left of the image as
@@ -7,7 +7,6 @@ by stacking crops along confirmed comets' reported positions, where only
 this convention puts the comet at the center.
 """
 
-import re
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,12 +15,13 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from scipy.ndimage import (binary_dilation, gaussian_filter, map_coordinates,
-                           maximum_filter, uniform_filter)
+                           maximum_filter, median_filter, uniform_filter)
 from scipy.spatial import cKDTree
 
 from . import DATA
+from .instrument import CURRENT as INSTRUMENT
 
-L1B = DATA / "ccor1" / "l1b"
+L1B = INSTRUMENT.frames_dir
 CADENCE = timedelta(minutes=15)
 
 # Background = median of the frames before this one (only the past: a
@@ -42,7 +42,7 @@ STAR_FRAMES = 8
 # makes too many false points).
 STAR_Z = 10
 STAR_MIN_R = 350
-STAR_MASK_R = 4
+STAR_MASK_R = INSTRUMENT.star_mask_r  # 4 for CCOR-1; see instrument.py
 
 # Matched filter for a point source (the PSF is ~2 px across), minus a
 # wider blur: a difference of Gaussians keeps points and cancels anything
@@ -59,8 +59,33 @@ BORDER = 12
 # Local noise is estimated over this box (the noise rises steeply toward
 # the occulter, so one global sigma would be wrong almost everywhere).
 NOISE_BOX = 41
+# Particle hits (INSTRUMENT.cosmic_rays): a pixel this far above the local
+# noise of the background-subtracted frame, and sharper than the PSF, is
+# one. Sharpness is how much of the pixel's excess its 3x3 median
+# doesn't share: ~1 for a lone pixel or a one-pixel-wide streak, 0.29 for
+# a point at PSF_SIGMA (its neighbors carry 71% of its peak). The hit
+# and its ring of neighbors are set to the background. Measured on
+# CCOR-2 2026-10-20 20:15: 730 blobs above 5 sigma in the map became
+# 135; the two Kreutz comets reported on 2026-10-16 (z ~2 in a single
+# frame) were nowhere near the gate.
+CR_Z = 4.0
+CR_SHARP = 0.6
+CR_GROW = 1
+# Dark spots (INSTRUMENT.dark_spots): raw pixels this far below their DARK_BOX
+# median, in units of the local noise of that difference, are set to it,
+# with their ring of neighbors. Nothing real is darker than its
+# surroundings by that much; a comet is a bright thing.
+DARK_Z = 4.0
+DARK_BOX = 5
+DARK_GROW = 1
+# Dark blotches too wide for that fill (a 15 px one at (1840, 1215) on
+# CCOR-2 fired three tracks on 2026-10-16): regions of the background
+# this far below their BLOTCH_BOX mean are masked in the significance
+# map, grown by BLOTCH_GROW to cover their wander.
+BLOTCH_BOX = 31
+BLOTCH_GROW = 6
 
-_NAME = re.compile(r"CCOR1_1B_(\d{8}T\d{6})_V\d+_NC\.fits$")
+_NAME = INSTRUMENT.name_re
 
 
 def frame_time(path):
@@ -77,7 +102,7 @@ def frame_paths(start, end):
     while d <= end.date():
         # _NC is the standard product; special campaigns (e.g. 5-minute
         # cadence, 2025-07-18 03:45-06:15) come as _0C and stand in for it.
-        paths += (L1B / f"{d:%Y/%m/%d}").glob("CCOR1_1B_*_NC.fits")
+        paths += (L1B / f"{d:%Y/%m/%d}").glob(INSTRUMENT.glob())
         d += timedelta(days=1)
     paths = [p for p in paths if start <= frame_time(p) <= end
              and frame_time(p).minute % 15 == 0]
@@ -93,10 +118,15 @@ def load(path):
 
 def _cache_key():
     """Settings that shape a significance map; maps made with other
-    settings live in another directory and are never served."""
+    settings (or for the other instrument) live in another directory and
+    are never served."""
     key = (f"bg{BG_FRAMES}s{BG_SKIP}-st{STAR_FRAMES}z{STAR_Z}r{STAR_MIN_R}m{STAR_MASK_R}"
            f"-psf{PSF_SIGMA}-{SURROUND_SIGMA}-nb{NOISE_BOX}-e{EDGE_MARGIN}b{BORDER}")
-    return key.replace(".", "p")
+    if INSTRUMENT.cosmic_rays:
+        key += f"-cr{CR_Z}s{CR_SHARP}g{CR_GROW}"
+    if INSTRUMENT.dark_spots:
+        key += f"-dk{DARK_Z}b{DARK_BOX}g{DARK_GROW}-bl{BLOTCH_BOX}g{BLOTCH_GROW}"
+    return INSTRUMENT.tag.lstrip("-") + ("-" if INSTRUMENT.tag else "") + key.replace(".", "p")
 
 
 SIG_CACHE = DATA / "sig"
@@ -123,6 +153,48 @@ def _cache_path(raw_path):
     archive, so the frame's name is a sufficient key."""
     t = frame_time(raw_path)
     return SIG_CACHE / _cache_key() / f"{t:%Y/%m/%d}" / (Path(raw_path).stem + ".npy")
+
+
+def fill_dark(raw):
+    """`raw` with its sharp dark spots (see DARK_*) replaced by the local
+    median; NaNs stay NaN."""
+    ok = np.isfinite(raw)
+    filled = np.where(ok, raw, 0).astype(np.float32)
+    med = median_filter(filled, DARK_BOX)
+    d = filled - med
+    sigma = uniform_filter(np.abs(d), NOISE_BOX) / np.sqrt(2 / np.pi)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dark = ok & (d < -DARK_Z * sigma)
+    dark = binary_dilation(dark, iterations=DARK_GROW) & ok
+    out = raw.copy()
+    out[dark] = med[dark]
+    return out
+
+
+def dark_blotches(bg):
+    """Pixels of a background map in or near a wide dark blotch (see
+    BLOTCH_*): DARK_Z local sigmas below the mean of the valid pixels
+    around them."""
+    ok = np.isfinite(bg)
+    w = ok.astype(np.float32)
+    b = np.where(ok, bg, 0).astype(np.float32)
+    mean = uniform_filter(b, BLOTCH_BOX) / np.maximum(uniform_filter(w, BLOTCH_BOX), 1e-3)
+    d = b - mean
+    sigma = (uniform_filter(np.abs(d) * w, NOISE_BOX)
+             / np.maximum(uniform_filter(w, NOISE_BOX), 1e-3) / np.sqrt(2 / np.pi))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dark = ok & (d < -DARK_Z * sigma)
+    return binary_dilation(dark, iterations=BLOTCH_GROW)
+
+
+def cosmic_rays(d):
+    """Pixels of the background-subtracted frame `d` (no NaNs) that are
+    particle hits, with their neighbors (see CR_Z, CR_SHARP, CR_GROW)."""
+    sigma = uniform_filter(np.abs(d), NOISE_BOX) / np.sqrt(2 / np.pi)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        hot = d > CR_Z * sigma
+        sharp = (d - median_filter(d, 3)) > CR_SHARP * d
+    return binary_dilation(hot & sharp, iterations=CR_GROW)
 
 
 def sun_pixel(header):
@@ -160,6 +232,8 @@ class Sequence:
     def raw(self, i):
         if i not in self._raw:
             self._raw[i] = load(self.paths[i])[0]
+            if INSTRUMENT.dark_spots:
+                self._raw[i] = fill_dark(self._raw[i])
         return self._raw[i]
 
     def significance(self, i):
@@ -180,6 +254,8 @@ class Sequence:
         d = self.raw(i) - bg
         bad = ~np.isfinite(d)
         d[bad] = 0
+        if INSTRUMENT.cosmic_rays:
+            d[cosmic_rays(d)] = 0
         d -= self._stars(i, bg)
         f = gaussian_filter(d, PSF_SIGMA) - gaussian_filter(d, SURROUND_SIGMA)
         # Robust local sigma: the box-mean of |f| scales to sigma for
@@ -200,6 +276,8 @@ class Sequence:
             s = f / sigma
         s[bad | ~np.isfinite(s)] = np.nan
         s[self._star_mask(i)] = np.nan
+        if INSTRUMENT.dark_spots:
+            s[dark_blotches(bg)] = np.nan
         s = flatten(s)
         self._sig[i] = s.astype(np.float32)
         cached.parent.mkdir(parents=True, exist_ok=True)

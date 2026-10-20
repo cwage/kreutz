@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 
 HALF = 40
 
@@ -56,9 +56,9 @@ def main():
     args = ap.parse_args()
     warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
     seq = Sequence(frame_paths(args.time - warm, args.time + timedelta(minutes=15) * (args.ahead + 1)))
-    i_ref = seq.times.index(args.time.replace(second=25))
+    i_ref = seq.times.index(args.time.replace(second=INSTRUMENT.second))
     img = strip(seq, i_ref, args.x, args.y, args.vx, args.vy, args.back, args.ahead)
-    out = DATA / "look" / f"{args.time:%Y%m%dT%H%M}_{args.x:.0f}_{args.y:.0f}.png"
+    out = DATA / f"look{INSTRUMENT.tag}" / f"{args.time:%Y%m%dT%H%M}_{args.x:.0f}_{args.y:.0f}.png"
     out.parent.mkdir(exist_ok=True)
     Image.fromarray(np.kron(img, np.ones((2, 2), np.uint8))).save(out)
     print(out)

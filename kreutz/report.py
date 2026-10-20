@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
-from .frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 from .render import follow
 from .vet import STATIONARY
 
@@ -102,7 +102,7 @@ def main():
         t, x, y, vx, vy = datetime.fromisoformat(c["time"][:19]), c["x"], c["y"], c["vx"], c["vy"]
     else:
         t, x, y, vx, vy = datetime.fromisoformat(args.what[0]), *map(float, args.what[1:5])
-    t = t.replace(second=25)
+    t = t.replace(second=INSTRUMENT.second)
     warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
     seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
     pts = measure(seq, seq.times.index(t), x, y, vx, vy, args.back, args.ahead)
@@ -115,13 +115,13 @@ def main():
     gif = args.what[0].replace(".confirmed.json", ".json").replace(".json", ".gif") if len(args.what) == 1 else None
     if gif and gif.startswith("/data/"):
         gif = gif[1:]  # the container's /data is the project's data/; print it as seen from there
-    print(f"# CCOR1, {pts[0][0]:%Y-%m-%d} UTC, {len(pts)} frames; {note}")
+    print(f"# {INSTRUMENT.telescope}, {pts[0][0]:%Y-%m-%d} UTC, {len(pts)} frames; {note}")
     vx, vy, _ = fit(pts)
     still = len(pts) >= 3 and np.hypot(vx, vy) < STATIONARY
     print(f"# motion ({vx:+.1f},{vy:+.1f}) px/frame" + (f": stationary (under {STATIONARY} px/frame), not a comet" if still else ""))
     if gif:
         print(f"# vetting animation: {gif} (real if it holds still while stars drift)")
-    print(f"# form: {FORM_URL}  telescope CCOR1, group Kreutz if it came in along the lane")
+    print(f"# form: {FORM_URL}  telescope {INSTRUMENT.telescope}, group Kreutz if it came in along the lane")
     print("\n".join(lines))
     if len(pts) < MIN_POINTS:
         print(f"# only {len(pts)} frames; Sungrazer wants at least {MIN_POINTS}", file=sys.stderr)

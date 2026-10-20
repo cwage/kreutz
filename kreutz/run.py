@@ -20,7 +20,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 from .search import search
 
 LOOSE = 4.5
@@ -41,7 +41,7 @@ def main():
     first = next(i for i, t in enumerate(seq.times) if t >= args.start)
     first = max(first, BG_FRAMES + BG_SKIP + args.n)
     kind = f"lane{args.n}" if args.lane else f"n{args.n}"
-    out = DATA / "runs" / kind / f"{args.start:%Y%m%dT%H%M}_{end:%Y%m%dT%H%M}.jsonl"
+    out = DATA / f"runs{INSTRUMENT.tag}" / kind / f"{args.start:%Y%m%dT%H%M}_{end:%Y%m%dT%H%M}.jsonl"
     field = None
     if args.lane:
         from .lane import build_field

@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from . import DATA
+from .frames import INSTRUMENT
 from .evaluate import FRAME
 from .sheet import make_sheets
 from .shortlist import MAYBE, STRONG, candidates, shortlist
@@ -33,7 +34,7 @@ MERGE_FRAMES = 8
 
 def runs_overlapping(kind, start, end):
     out = []
-    for p in sorted((DATA / "runs" / kind).glob("*.jsonl")):
+    for p in sorted((DATA / f"runs{INSTRUMENT.tag}" / kind).glob("*.jsonl")):
         a, b = (datetime.strptime(s, "%Y%m%dT%H%M") for s in p.stem.split("_"))
         if a < end and b > start:
             out.append(p)
@@ -99,7 +100,7 @@ def main():
     ap.add_argument("--per", type=int, default=6)
     args = ap.parse_args()
     end = args.end or args.start + timedelta(days=7)
-    out = DATA / "weekly" / f"{args.start:%Y-%m-%d}_{end:%Y-%m-%d}"
+    out = DATA / f"weekly{INSTRUMENT.tag}" / f"{args.start:%Y-%m-%d}_{end:%Y-%m-%d}"
     out.mkdir(parents=True, exist_ok=True)
     records, cands, known, to_vet, counts = collate(args.start, end, args.known)
     (out / "shortlist.json").write_text(json.dumps(records, indent=1, default=str))

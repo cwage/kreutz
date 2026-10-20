@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from . import DATA
 from .evaluate import matches, report_points
+from .frames import INSTRUMENT
 from .live import LIVE, other_instruments
 
 
@@ -88,7 +89,7 @@ def main():
 
     print("lead: minutes between our alert and the report's posting (+ means we were first), "
           "candidate stage / confirmed stage")
-    print(f"{'alert (last frame)':22} {'decided':17} {'confirmed':11} {'CCOR-1 report':40} {'lead':24} other instrument")
+    print(f"{'alert (last frame)':22} {'decided':17} {'confirmed':11} {INSTRUMENT.label + ' report':40} {'lead':24} other instrument")
     for a, ccor1, other, decided in rows:
         conf = a["confirmed_utc"][5:16] if a.get("confirmed_utc") else "-"
         c1 = f"{ccor1[0][:38]:40} {leads(ccor1[1], a):24}" if ccor1 else f"{'-':40} {'':24}"

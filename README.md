@@ -59,6 +59,41 @@ docker compose run --rm kreutz kreutz.run 2025-07-17 --n 8            # search o
 docker compose run --rm kreutz kreutz.evaluate /data/runs/n8/20250717*.jsonl
 ```
 
+### CCOR-2
+
+`KREUTZ_INSTRUMENT=ccor2` points every command at CCOR-2, the coronagraph
+on SWFO-L1 at the Sun-Earth L1 point, instead of CCOR-1 (the default; see
+`kreutz/instrument.py`). Its frames are the same size, cadence and units,
+so the detector runs on them, and they go to `data/ccor2/l1a/`
+while its runs, cache and live state get a `-ccor2` suffix, so both
+instruments share one checkout and one `data/`. What doesn't carry over
+is everything measured on CCOR-1. The search sector (`instrument.py`) is
+CCOR-2's own, from the 73 CCOR-2 Kreutz reports of Jul-Oct 2026: the lower
+right of the Sun rather than the right, and 20 degrees either side of
+the lane's center rather than 75: the reports span 12, and the stray-light
+striping below the lane near the bottom edge stacks into tracks. The
+Kreutz lane is built from
+archive runs with `kreutz.lanesamples` and saved as
+`kreutz/lane-samples-ccor2.json`; `kreutz.live` and `--lane` refuse to run
+without one. The SWPC feed carries CCOR-2 at level 1A only and NOAA's
+archive has none yet, so the feed's rolling ~30 days are the only frames;
+`kreutz.sync --loop` keeps them from aging out. Level 1A isn't cleaned of
+particle hits, and at L1 there are many (five times CCOR-1's count of
+blobs above 5 sigma in a frame), so `frames.cosmic_rays` takes out pixels
+far above the local noise and sharper than the PSF before the point
+filter; that brought one window's candidates from 284 to 18. Two more
+1A quirks each made a class of slow false tracks on the Oct 16, 2026
+test day: bright stars leave a ring of residue at 4-8 px after the star
+model (the star mask is 10 px there, not 4), and the detector's dark
+defects wander a few pixels from frame to frame on the 1A grid, so they
+don't cancel against the background; `frames.fill_dark` replaces them
+with the local median in every raw frame, and `frames.dark_blotches`
+masks the wide ones (15 px and more) that a median fill can't reach.
+
+```
+KREUTZ_INSTRUMENT=ccor2 docker compose run --rm -d kreutz kreutz.sync --loop
+```
+
 Modules, each with usage in its docstring:
 
 | module | what it does |
@@ -77,6 +112,8 @@ Modules, each with usage in its docstring:
 | `kreutz.score` | table of the live alerts against the reports that appeared: our lead or lag |
 | `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
 | `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
+| `kreutz.sync` | pull everything on the SWPC feed to disk (CCOR-2, which the watcher can't run on yet; `--loop` to keep up) |
+| `kreutz.lanesamples` | lane samples for `lane.py` from archive runs: the windows of tracks matching the instrument's Kreutz reports |
 
 ### Pictures
 

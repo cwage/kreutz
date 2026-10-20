@@ -566,3 +566,44 @@ def test_prediction_comes_from_the_recent_line_not_the_last_step():
     assert x2 == pytest.approx(x, abs=0.01) and vx2 == pytest.approx(-8.7)
     # too few points: the latest step
     assert live.predicted(dict(f, points=pts[:2]), t, 6)[:2] == (pts[-1][1] - 36.0, pts[-1][2] - 24.0)
+
+
+def test_instruments_name_their_own_frames_and_directories():
+    from kreutz.instrument import INSTRUMENTS
+    c1, c2 = INSTRUMENTS["ccor1"], INSTRUMENTS["ccor2"]
+    assert c1.name_re.search("CCOR1_1B_20261020T201525_V00_NC.fits").group(1) == "20261020T201525"
+    assert c2.name_re.search("CCOR2_1A_20261020T201514_V00_NC.fits").group(1) == "20261020T201514"
+    assert not c1.name_re.search("CCOR2_1A_20261020T201514_V00_NC.fits")
+    assert c1.glob("20261020T2015*") == "CCOR1_1B_20261020T2015*_NC.fits"
+    # CCOR-1's directories keep their old names; CCOR-2's are tagged.
+    assert (c1.tag, c2.tag) == ("", "-ccor2")
+    assert c1.frames_dir.parts[-2:] == ("ccor1", "l1b")
+    assert c2.frames_dir.parts[-2:] == ("ccor2", "l1a")
+    assert c1.lane_samples.exists() and c1.lane_samples.name == "lane-samples.json"
+    assert c2.lane_samples.name == "lane-samples-ccor2.json"
+
+
+def test_cosmic_rays_flags_hits_and_streaks_but_not_psf_points():
+    from kreutz import frames
+    rng = np.random.default_rng(1)
+    d = rng.normal(0, 1, (120, 120)).astype(np.float32)
+    yy, xx = np.mgrid[-6:7, -6:7]
+    d[50:63, 50:63] += 40 * np.exp(-(xx ** 2 + yy ** 2) / (2 * frames.PSF_SIGMA ** 2))  # a comet
+    d[20, 20] += 40           # a hit
+    d[80, 30:37] += 40        # a streak
+    cr = frames.cosmic_rays(d)
+    assert cr[20, 20] and cr[80, 33]
+    assert not cr[44:69, 44:69].any()
+
+
+def test_fill_dark_fills_dark_spots_and_keeps_bright_points_and_nans():
+    from kreutz import frames
+    rng = np.random.default_rng(2)
+    raw = (100 + rng.normal(0, 1, (120, 120))).astype(np.float32)
+    raw[30:33, 40:43] = 60           # a dark defect
+    raw[80, 80] = 160                # a bright point
+    raw[:5] = np.nan                 # off the detector
+    out = frames.fill_dark(raw)
+    assert abs(out[31, 41] - 100) < 3 and abs(out[30, 40] - 100) < 3
+    assert out[80, 80] == 160
+    assert np.isnan(out[:5]).all() and np.isfinite(out[5:]).all()
