@@ -1,10 +1,11 @@
-"""Download archived CCOR-1 L1b frames from NOAA NCEI.
+"""Download archived coronagraph frames from NOAA NCEI.
 
     docker compose run --rm kreutz kreutz.fetch 2025-07-17 [2025-07-19]
 
 Full-resolution (2048x1920) calibrated frames, one every 15 minutes,
 ~9 MB each (~880 MB/day), into data/ccor1/l1b/YYYY/MM/DD/. Files already
-present are skipped, so an interrupted day just resumes.
+present are skipped, so an interrupted day just resumes. KREUTZ_INSTRUMENT
+picks the instrument (see instrument.py); CCOR-2 isn't in the archive yet.
 """
 
 import argparse
@@ -15,10 +16,10 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
-from . import DATA
+from .instrument import CURRENT as INSTRUMENT
 
 ARCHIVE = "https://archive.data.noaa.gov/satellite-spaceweather"
-PREFIX = "SWFO/GOES-19/CCOR-1/ccor1-l1b"
+PREFIX = INSTRUMENT.archive_prefix
 WORKERS = 4
 
 
@@ -50,7 +51,7 @@ def day_keys(d):
 
 
 def _download(key):
-    dest = DATA / "ccor1" / "l1b" / key.split("ccor1-l1b/", 1)[1]
+    dest = INSTRUMENT.frames_dir / key.split(PREFIX + "/", 1)[1]
     if dest.exists():
         return 0
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +66,8 @@ def main():
     ap.add_argument("start", type=date.fromisoformat)
     ap.add_argument("end", type=date.fromisoformat, nargs="?")
     args = ap.parse_args()
+    if PREFIX is None:
+        sys.exit(f"{INSTRUMENT.label} isn't in the NCEI archive; kreutz.live syncs its feed")
     d, end = args.start, args.end or args.start
     while d <= end:
         keys = day_keys(d)

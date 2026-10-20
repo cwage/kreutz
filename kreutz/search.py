@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.ndimage import maximum_filter
 
-from .frames import CADENCE, Sequence
+from .frames import CADENCE, INSTRUMENT, Sequence
 
 CLIP_SIGMA = 5.0
 SPEED_MAX = 12.5
@@ -41,8 +41,10 @@ V_STEP = 0.5
 # CCOR-1 in July-August 2025 was first seen at 459 px or farther. (Those
 # distances were measured about the WCS reference pixel, which is 40 px
 # from the Sun; the annulus is about the Sun now, frames.sun_pixel.)
-R_MIN, R_MAX = 460, 1250
-ANGLE_MAX = 75  # deg either side of straight right of the Sun
+# (Those are CCOR-1's numbers; each instrument carries its own, instrument.py.)
+R_MIN, R_MAX = INSTRUMENT.r_min, INSTRUMENT.r_max
+ANGLE_CENTER = INSTRUMENT.angle_center  # deg counterclockwise from straight right of the Sun
+ANGLE_MAX = INSTRUMENT.angle_max        # deg either side of that
 # Stay this far inside the frame: the outermost rows and columns carry
 # vignetting gradients that survive background subtraction.
 EDGE_PX = 30
@@ -101,7 +103,8 @@ def _roi(seq: Sequence):
     dx, dy = x - sx, -(y - sy)  # y up for the angle
     r = np.hypot(dx, dy)
     ang = np.degrees(np.arctan2(dy, dx))
-    m = (r >= R_MIN) & (r <= R_MAX) & (np.abs(ang) <= ANGLE_MAX)
+    off = (ang - ANGLE_CENTER + 180) % 360 - 180
+    m = (r >= R_MIN) & (r <= R_MAX) & (np.abs(off) <= ANGLE_MAX)
     m &= (rr >= EDGE_PX) & (rr < H - EDGE_PX) & (cc >= EDGE_PX) & (cc < W - EDGE_PX)
     rs, cs = np.nonzero(m)
     box = (slice(rs.min(), rs.max() + 1), slice(cs.min(), cs.max() + 1))

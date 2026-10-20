@@ -22,8 +22,9 @@ import json
 import numpy as np
 
 from . import DATA
+from .frames import INSTRUMENT
 from .evaluate import FRAME, load, other_kreutz, report_points, tracks
-from .lane import _flow_at, build_field, in_lane
+from .lane import _flow_at, field_or_none, in_lane
 
 THRESHOLD = 6.0
 LINK = 3
@@ -148,7 +149,7 @@ def shortlist(runs, threshold=THRESHOLD, link=LINK, start=None, end=None):
     days = sorted({t.date() for t in by_time})
     all_reps = all_reports()
     reps = report_tracks(days, all_reps)
-    field = build_field((FRAME_ROWS, 2048))
+    field = field_or_none((FRAME_ROWS, 2048))
     out = []
     for tr in tracks(by_time, threshold, link):
         fire = tr[link - 1]
@@ -186,7 +187,7 @@ def main():
         return
     cands = candidates(out)
     days = sorted({r["time"][:10] for r in out})
-    dest = DATA / "shortlist" / f"{days[0]}_{days[-1]}.json"
+    dest = DATA / f"shortlist{INSTRUMENT.tag}" / f"{days[0]}_{days[-1]}.json"
     dest.parent.mkdir(exist_ok=True)
     dest.write_text(json.dumps({"candidates": cands, "all": out}, indent=1, default=str))
     known = [r for r in out if "known" in r]

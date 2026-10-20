@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 from .look import strip
 
 BACK, AHEAD = 7, 5
@@ -70,7 +70,7 @@ def main():
     ap.add_argument("candidates")
     ap.add_argument("--per", type=int, default=6)
     args = ap.parse_args()
-    make_sheets(json.load(open(args.candidates)), DATA / "look", args.per)
+    make_sheets(json.load(open(args.candidates)), DATA / f"look{INSTRUMENT.tag}", args.per)
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ from astropy.io import fits
 from PIL import Image, ImageDraw
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, CADENCE, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, CADENCE, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 
 FOLLOW_R = 4        # px around the prediction to look for the peak
 GAP_R = 2           # extra px of search radius per frame of data gap
@@ -157,7 +157,7 @@ def write_fits(path, seq, track, cubes, origin):
     primary = fits.PrimaryHDU()
     h = primary.header
     h["ORIGIN"] = "kreutz.render"
-    h["INSTRUME"] = "CCOR-1"
+    h["INSTRUME"] = INSTRUMENT.label
     h["NFRAMES"] = len(idx)
     h["TSTART"] = seq.times[idx[0]].isoformat()
     h["TEND"] = seq.times[idx[-1]].isoformat()
@@ -238,13 +238,13 @@ def main():
         t, x, y, vx, vy = datetime.fromisoformat(c["time"][:19]), c["x"], c["y"], c["vx"], c["vy"]
     else:
         t, x, y, vx, vy = datetime.fromisoformat(args.time), args.x, args.y, args.vx, args.vy
-    t = t.replace(second=25)
+    t = t.replace(second=INSTRUMENT.second)
     warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
     seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
     i0 = seq.times.index(t)
     track = follow(seq, i0, x, y, vx, vy, args.back, args.ahead, args.lost)
     idx = sorted(track)
-    out = DATA / "render" / (args.name or f"{t:%Y%m%dT%H%M}_{x:.0f}_{y:.0f}")
+    out = DATA / f"render{INSTRUMENT.tag}" / (args.name or f"{t:%Y%m%dT%H%M}_{x:.0f}_{y:.0f}")
     out.mkdir(parents=True, exist_ok=True)
     (out / "track.json").write_text(json.dumps(
         [{"time": seq.times[i].isoformat(), "x": track[i][0], "y": track[i][1],

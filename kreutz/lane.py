@@ -11,7 +11,7 @@ down, and the predicted path follows the comet as it speeds up, so the
 stack can be 16 frames (4 hours) long without smearing.
 
 The flow field is built from observed comet tracks (lane-samples.json, shipped
-with the package: every window of the bright lane tracks an archive
+with the package; lane-samples-ccor2.json for CCOR-2 once it has one: every window of the bright lane tracks an archive
 search over Aug-Oct 2026 found): each
 pixel's velocity is the distance-weighted mean of the nearest samples'.
 The band searched is everywhere within BAND_PX of a sample.
@@ -19,13 +19,12 @@ The band searched is everywhere within BAND_PX of a sample.
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 from scipy.ndimage import binary_dilation, maximum_filter
 from scipy.spatial import cKDTree
 
-from .frames import Sequence
+from .frames import INSTRUMENT, Sequence
 from .search import CLIP_SIGMA, FRAME_KEEP, FRAME_KEEP_FRAC, Candidate, _dedupe, window_frames
 
 BAND_PX = 40
@@ -45,10 +44,20 @@ class Field:
     svc: np.ndarray
 
 
+def field_or_none(shape):
+    """The instrument's lane field, or None while it has no samples yet
+    (callers that only use the lane to extrapolate known comets backward
+    do without)."""
+    return build_field(shape) if INSTRUMENT.lane_samples.exists() else None
+
+
 def build_field(shape, samples=None):
     """Flow field and search band from lane samples [(x, y, vx, vy, ...)]."""
     if samples is None:
-        samples = json.load(open(Path(__file__).with_name("lane-samples.json")))
+        f = INSTRUMENT.lane_samples
+        if not f.exists():
+            raise FileNotFoundError(f"no Kreutz lane for {INSTRUMENT.label} yet: {f.name} is missing")
+        samples = json.load(open(f))
     S = np.array([s[:4] for s in samples], dtype=float)
     H, W = shape
     # report (x, y, vx, vy) -> array (row, col, vrow, vcol)

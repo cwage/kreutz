@@ -27,6 +27,7 @@ import numpy as np
 from astropy.io import fits
 
 from . import DATA
+from .instrument import CURRENT as INSTRUMENT
 from .search import MAX_MISSING
 
 FRAME = timedelta(minutes=15)
@@ -34,7 +35,7 @@ FRAME = timedelta(minutes=15)
 # it (frames.sun_pixel: 40 px from the WCS reference pixel, and the same
 # in every frame); plenty for a radius cut on stored candidates, since the
 # search itself uses each frame's WCS.
-SUN_XY = (1005.7, 957.1)
+SUN_XY = INSTRUMENT.sun_xy
 # NOAA publishes each real-time frame 12-19 min after it's taken (measured
 # on the SWPC feed); one more minute covers our search.
 PUBLISH_DELAY = timedelta(minutes=16)
@@ -165,7 +166,7 @@ def _header_at(t):
     from .frames import L1B
     key = f"{t:%Y%m%dT%H%M}"
     if key not in _HDR:
-        fs = sorted((L1B / f"{t:%Y/%m/%d}").glob(f"CCOR1_1B_{key}*_NC.fits"))
+        fs = sorted((L1B / f"{t:%Y/%m/%d}").glob(INSTRUMENT.glob(f"{key}*")))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # the files carry a BLANK on float data
             _HDR[key] = fits.getheader(fs[0], 1) if fs else None
@@ -190,7 +191,7 @@ def report_points(reports, day):
     in L1b report coordinates (see swpc_canvas_to_report)."""
     out = []
     for r in reports:
-        if not r["points"] or r["telescope"] != "CCOR1":
+        if not r["points"] or r["telescope"] != INSTRUMENT.telescope:
             continue
         posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
         pts = []
@@ -198,8 +199,8 @@ def report_points(reports, day):
             t = posted.replace(hour=int(hhmm[:2]), minute=int(hhmm[2:]), second=0)
             if t > posted:
                 t -= timedelta(days=1)
-            if r.get("reporter") in SWPC_CANVAS_REPORTERS:
-                xy = swpc_canvas_to_report(t.replace(second=25), x, y)
+            if INSTRUMENT.swpc_canvas and r.get("reporter") in SWPC_CANVAS_REPORTERS:
+                xy = swpc_canvas_to_report(t.replace(second=INSTRUMENT.second), x, y)
                 if xy is None:
                     continue
                 x, y = xy
@@ -222,7 +223,7 @@ OTHER_KINDS = ("Potential Comet", "Additional Observations", "Known Comet Now En
 
 
 def other_kreutz(reports, t_first, t_last):
-    """Kreutz reports from instruments other than CCOR-1 whose observed
+    """Kreutz reports from instruments other than ours whose observed
     times (or, without points, posting time) fall within that instrument's
     OTHER_BEFORE of t_first to OTHER_AFTER of t_last. Their pixel coordinates can't be
     compared with ours, so this is matching by time; for a track in the
@@ -230,7 +231,7 @@ def other_kreutz(reports, t_first, t_last):
     Kreutz comets arrive one at a time along one path."""
     out = []
     for r in reports or []:
-        if r.get("group") != "Kreutz" or r.get("telescope") in (None, "CCOR1") \
+        if r.get("group") != "Kreutz" or r.get("telescope") in (None, INSTRUMENT.telescope) \
                 or r.get("kind") not in OTHER_KINDS:
             continue
         t0 = t_first - OTHER_BEFORE.get(r["telescope"], OTHER_BEFORE_DEFAULT)
@@ -274,9 +275,9 @@ def evaluate(runs, threshold, link):
     trs = tracks(by_time, threshold, link)
     # Match as the shortlist does: along the report's path, extrapolated
     # forward (straight) and, for Kreutz reports, backward along the lane.
-    from .lane import build_field
+    from .lane import field_or_none
     from .shortlist import FRAME_ROWS, _known_by_position
-    field = build_field((FRAME_ROWS, 2048))
+    field = field_or_none((FRAME_ROWS, 2048))
     fired = []
     for tr in trs:
         fire = tr[link - 1]  # the window where it qualified
