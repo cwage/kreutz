@@ -2,7 +2,8 @@
 # Keep an eye on the running watchers (kreutz.live, one per instrument):
 # one line per thing worth a look, nothing for quiet windows.
 #   - from their logs: alerts, confirmations, rejections, report matches,
-#     chains of three or more windows, errors, a container that stops
+#     vetoes (a chain decided as a star, off-lane, ...: once each, where
+#     the chain itself goes on for hours), errors, a container that stops
 #   - every 5 min: a status.json more than 45 min old (a stalled watcher,
 #     or a feed that stays down; single feed errors are left out)
 #   - every 30 min: kreutz.audit for each instrument (missed, vetoed and
@@ -11,7 +12,7 @@
 cd "$(dirname "$0")/.."
 follow() {  # $1 label, $2 container
   docker logs -f --since 1m "$2" 2>&1 | grep -v --line-buffered -E 'Warning|warnings.warn|feed error' \
-    | grep -E --line-buffered 'ALERT|CONFIRMED|REJECTED|by position|longest [3-9]|longest [1-9][0-9]|Traceback|Error|error|failed|skipped' \
+    | grep -E --line-buffered 'ALERT|CONFIRMED|REJECTED|by position|track at .* is |Traceback|Error|error|failed|skipped' \
     | sed -u "s/^/[$1] /"
   echo "[$1] log stream ended: container $2 stopped?"
 }
