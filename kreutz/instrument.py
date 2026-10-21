@@ -43,6 +43,7 @@ class Instrument:
     swpc_canvas: bool    # reports measured on SWPC's derotated image can be converted (evaluate.py)
     second: int          # frames are stamped this many seconds past the quarter hour
     star_mask_r: int     # radius masked around confirmed stars in the significance map
+    page_speed: float    # px/frame: a candidate slower than this isn't paged (live.pageworthy)
     passage: int         # hours a Kreutz comet stays in the field after it's found (live.PASSAGE)
 
     @property
@@ -82,7 +83,10 @@ INSTRUMENTS = {
                         "https://services.swpc.noaa.gov/products/ccor1/fits/",
                         "SWFO/GOES-19/CCOR-1/ccor1-l1b", False, False,
                         # see search.py: all 81 Kreutz tracks of Jul-Aug 2025
-                        460, 1250, 0, 75, (1005.7, 957.1), True, 25, 4, 12),
+                        460, 1250, 0, 75, (1005.7, 957.1), True, 25, 4,
+                        # Reported Kreutz comets: 5th percentile 4.3 px/frame; the
+                        # slowest real alert so far 4.1.
+                        4.0, 12),
     # The feed carries CCOR-2 at level 1A only, and NCEI's archive prefix
     # (SWFO/SWFO-L1/CCOR-2/) is empty as of 2026-10-20; the feed's ~30
     # days of frames are the only source. Outside the magnetosphere at L1
@@ -111,6 +115,8 @@ INSTRUMENTS = {
                         # 14 of 22 unexplained tracks on 2026-10-16 were 7-12 px
                         # from a star.
                         10,
+                        # Reported Kreutz comets: slowest 2.8 px/frame, 5th percentile 3.7.
+                        2.5,
                         # The lane runs ~700 px at 3-10 px/frame (CCOR-1: ~700 at
                         # 9-12), so about twice CCOR-1's passage.
                         20),

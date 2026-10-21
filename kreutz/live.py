@@ -49,12 +49,18 @@ time+lane"; the alert for anything else lists such reports as a hint.
 --notify CMD runs CMD with the alert's .json path appended, e.g.
 --notify "python -m kreutz.notify" to post to an ntfy topic (notify.py);
 it's the command's job to be quiet about known comets, and about
-candidates far from the lane: the alert file carries "lane_px", the
-distance to the nearest archived Kreutz track, and "near_lane", whether
-that's within lane.MATCH_PX. A far candidate is searched, followed,
-pictured and listed like any other, just not paged until it's confirmed;
-every real alert so far was within 50 px of the lane and most false ones
-hundreds of px out.
+candidates that don't move like a sungrazer: the alert file carries
+"heading_deg", how far off straight at the Sun the track points, and
+"paged", whether that's within PAGE_HEADING at the instrument's
+page_speed or more (pageworthy). One that isn't is searched, followed,
+pictured and listed like any other, just not paged until it's confirmed.
+Every real alert so far was within 14 degrees of sunward at 4 px/frame or
+more; the satellite of 2026-10-21 07:00 was 24 off, and the false alerts
+scatter out to 90. (This replaced a gate on distance to the archived
+Kreutz tracks, which the stream outgrows: the comet of 2026-10-21 11:00,
+Ruan's, ran 273 px from the nearest track, and its first page was held
+back for 15 minutes.) "lane_px", that distance, is still written for
+the record.
 --render makes a confirmed object's cutouts and pictures (render.py,
 style.py) in the background under data/render/<alert name>/, and again
 every RENDER_EVERY frames while the object is still in view, so the
@@ -85,7 +91,7 @@ from . import DATA, page
 from .instrument import CURRENT as INSTRUMENT
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
-from .lane import MATCH_PX, build_field, in_lane, lane_px, off_flow
+from .lane import build_field, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, fit, measure
@@ -285,6 +291,7 @@ def other_instruments(track, reps):
 
 
 CONFIRM_LOST = 3  # consecutive frames without the object before a candidate is dropped
+PAGE_HEADING = 20  # deg off straight at the Sun: a candidate pointed farther off than this isn't paged
 CHAIN_PX = 8.0  # a search chain this close to a follow-up's prediction is the same object
 FOLLOWED_PX = 15.0  # and so is a new chain this close to a follow-up's prediction (+ FOLLOWED_GROW/frame)
 FOLLOWED_GROW = 1.0
@@ -311,6 +318,21 @@ def start_render(f):
 
 def rendering(f):
     return f.get("render_proc") is not None and f["render_proc"].poll() is None
+
+
+def sunward(c, sun_xy):
+    """(degrees off straight at the Sun, px/frame) of a candidate's motion."""
+    sx, sy = sun_xy
+    to_sun = np.degrees(np.arctan2(sy - c["y"], sx - c["x"]))
+    heading = np.degrees(np.arctan2(c["vy"], c["vx"]))
+    return float(abs((heading - to_sun + 180) % 360 - 180)), float(np.hypot(c["vx"], c["vy"]))
+
+
+def pageworthy(c, sun_xy):
+    """Does a candidate move like a sungrazer: at the Sun, within
+    PAGE_HEADING, at the instrument's page_speed or more?"""
+    off, speed = sunward(c, sun_xy)
+    return off <= PAGE_HEADING and speed >= INSTRUMENT.page_speed
 
 
 def seen(f):
@@ -444,7 +466,14 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
     it has been missing for CONFIRMED_LOST frames in a row (logged as
     ended); a candidate missing CONFIRM_LOST frames before confirmation is
     logged as faded. A frame where the single-frame measurement fails but
-    the search's chains still hold the object (chained) counts as seen.
+    the search's chains still hold the object (chained, or for a confirmed
+    object reanchored) holds it: the follow-up moves to where the chain
+    says and the misses don't grow, but nothing is measured, so the frame
+    counts toward neither confirmation nor the report block. (It used to
+    count: the search stacks eight frames, so a chain goes on holding an
+    object for two hours after it's gone, and the satellite glint of
+    2026-10-21 05:30-06:30 was "confirmed" at 07:31 on a fifth point no
+    frame showed.) An object is confirmed on a frame it was measured in.
     At the confirming frame the measured points are vetted (unlikely):
     what fails is logged as rejected and dropped, with no notification
     and no render."""
@@ -457,11 +486,9 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             continue
         pts = measure(seq, last, f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt, f["vx"], f["vy"],
                       back=0, ahead=0, lost=0)
-        if not pts:
-            hit = chained(f, chains, seq.times[last], dt)
-            pts = [hit] if hit else []
+        held = chained(f, chains, seq.times[last], dt) if not pts else None
         velocity = None
-        if not pts and f.get("confirmed"):
+        if not pts and not held and f.get("confirmed"):
             # where the line through its recent points says, rather than
             # where its latest step says; then a search chain near there
             px, py, vx, vy = predicted(f, seq.times[last], dt)
@@ -471,7 +498,14 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             else:
                 hit = reanchored(f, chains, seq.times[last], dt)
                 if hit:
-                    pts, velocity = [hit[0]], hit[1]
+                    held, velocity = hit
+        if held and not pts:
+            # the search still has it: follow its position, measure nothing
+            t, x, y, _ = held
+            f["vx"], f["vy"] = velocity or ((x - f["x"]) / dt, (y - f["y"]) / dt)
+            f["t"], f["x"], f["y"] = t, x, y
+            keep.append(f)
+            continue
         if not pts:
             f["misses"] += 1
             if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
@@ -504,7 +538,7 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
                        "frames": len(f["points"]), "other_instruments": f["others"],
                        "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds"),
-                       "lane_px": f.get("lane_px"), "near_lane": f.get("near_lane")},
+                       "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged")},
                       open(path, "w"), indent=1)
             log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
                 known=f.get("known"))
@@ -686,7 +720,8 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "first": f["track"][0]["time"], "last_seen": f["t"].isoformat(timespec="seconds"),
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
-            "lane_px": f.get("lane_px"), "near_lane": f.get("near_lane"),
+            "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
+            "near_lane": f.get("near_lane"),  # files from before the heading gate
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
             "pictures": rendered(name), "rendering": rendering(f)})
@@ -780,6 +815,7 @@ def main():
             continue
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         seq = Sequence(frame_paths(now - history - timedelta(hours=2), now))
+        sun_xy = seq.rc_to_report(*seq.sun_rc())  # report coords, for pageworthy
         if field is None:
             field = lane_field() if seq.shape == (FRAME_ROWS, 2048) else build_field(seq.shape)
         todo = [i for i, t in enumerate(seq.times)
@@ -892,11 +928,13 @@ def main():
                     # kind and the notification differ.
                     stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
                     px = round(lane_px(field, c["x"], c["y"], seq.shape[0]))
-                    near = px <= MATCH_PX
+                    off, speed = sunward(c, sun_xy)
+                    paged = pageworthy(c, sun_xy)
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
-                         "known": known_rep, "lane_px": px, "near_lane": near}, indent=1))
+                         "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged},
+                        indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
                     except Exception as e:
@@ -909,10 +947,10 @@ def main():
                               f"already reported ({who(known_rep)}, by {known_rep['how']})", file=sys.stderr)
                     else:
                         remember(c, f"alert: {stem.name}")
-                        quiet = None if near else f"{px} px off the lane, not paged"
+                        quiet = None if paged else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                         log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
-                            reports_checked=reps is not None, others=others, lane_px=px, paged=near,
-                            note=quiet)
+                            reports_checked=reps is not None, others=others, lane_px=px,
+                            heading_deg=round(off), paged=paged, note=quiet)
                         hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
                             if others else ""
                         print(f"ALERT {stem}{' (' + quiet + ')' if quiet else ''}{hint}", flush=True)
@@ -921,7 +959,8 @@ def main():
                     pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
-                                    "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px, "near_lane": near,
+                                    "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px,
+                                    "heading_deg": round(off), "paged": paged,
                                     "decided_utc": now_utc.isoformat(timespec="seconds")})
                     if args.notify:
                         try:

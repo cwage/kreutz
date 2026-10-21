@@ -150,11 +150,19 @@ each new frame; once it has held for five frames, a second "confirmed" file
 is written with the report block ready for Sungrazer's form. With
 `--notify "python -m kreutz.notify"` and `NTFY_TOPIC` set in `.env`, both
 stages page an ntfy topic with the `kreutz.report` command to run, except
-that a candidate more than 150 px from the archived Kreutz tracks is not
-paged until it's confirmed: it's still written, followed, pictured and
-shown on the status page as "not paged". Every real alert so far was
-within 50 px of the lane; the stray-light ghosts, lines and corner noise
-that paged in the nights of 2026-10-16/17 were hundreds of px out. With
+that a candidate that doesn't move like a sungrazer, pointed more than 20
+degrees off straight at the Sun or slower than the instrument's floor (4
+px/frame on CCOR-1, 2.5 on CCOR-2), is not paged until it's confirmed:
+it's still written, followed, pictured and shown on the status page as
+"not paged". Every real alert so far was within 14 degrees of sunward at
+4 px/frame or more; the stray-light ghosts, lines and corner noise that
+page scatter out to 90 degrees, and the satellite glint of 2026-10-21 was
+24 off. (A gate on distance to the archived Kreutz tracks came first, and
+the stream outgrew it: Ruan's comet of 2026-10-21 ran 273 px from the
+nearest track and its first page was held back.) A frame where only the
+search's stacked chain holds an object, and nothing is measured, keeps
+the follow-up alive but counts toward neither confirmation nor the report
+block; an object is confirmed on a frame it was measured in. With
 `--render`, a confirmed object's cutouts and pictures are made in the
 background under `data/render/`, and remade every few frames while it stays
 in view, so the pictures grow with the passage.

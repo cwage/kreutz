@@ -345,7 +345,7 @@ def test_reported_by_extrapolates_along_the_report():
     assert live.reported_by(elsewhere, datetime(2026, 10, 10, 18, 0, 25), reps) is None
 
 
-def test_follow_up_counts_the_chain_when_the_frame_does_not(monkeypatch):
+def test_follow_up_holds_on_the_chain_but_does_not_count_it(monkeypatch):
     import types
     monkeypatch.setattr(live, "measure", lambda *a, **k: [])
     t0 = datetime(2026, 10, 10, 8, 30, 25)
@@ -354,7 +354,16 @@ def test_follow_up_counts_the_chain_when_the_frame_does_not(monkeypatch):
     seq = types.SimpleNamespace(times=[t0, t0 + timedelta(minutes=15)])
     on_track = [[{"time": seq.times[1].isoformat(), "x": 1874.0, "y": 1208.0, "vx": -9.0, "vy": -2.5, "score": 7.1}]]
     keep = live.follow_up(seq, 1, [{**f, "points": []}], None, chains=on_track)
-    assert keep[0]["misses"] == 0 and len(keep[0]["points"]) == 1 and keep[0]["x"] == 1874.0
+    assert keep[0]["misses"] == 0 and keep[0]["points"] == [] and keep[0]["x"] == 1874.0
+    # held every frame, it never confirms: nothing was measured
+    f5 = {**f, "points": [], "misses": 0}
+    for i in range(1, 7):
+        times = [t0 + timedelta(minutes=15) * j for j in range(i + 1)]
+        seq_i = types.SimpleNamespace(times=times)
+        chain = [[{"time": times[i].isoformat(), "x": 1883.0 - 9.0 * i, "y": 1210.0 - 2.5 * i,
+                   "vx": -9.0, "vy": -2.5, "score": 7.1}]]
+        f5, = live.follow_up(seq_i, i, [f5], None, chains=chain)
+    assert f5["points"] == [] and not f5.get("confirmed") and f5["misses"] == 0
     off_track = [[dict(on_track[0][0], y=1240.0)]]
     keep = live.follow_up(seq, 1, [{**f, "points": []}], None, chains=off_track)
     assert keep[0]["misses"] == 1 and keep[0]["points"] == []
@@ -472,18 +481,35 @@ def test_lane_distance_gates_the_page_but_not_the_follow_up():
     assert lane.MATCH_PX == 150
     from kreutz import notify
     track = [{"time": "2026-10-17T03:15:25", "x": 1645.0, "y": 609.0, "vx": -3.5, "vy": 0.5}]
-    far = {"track": track, "other_instruments": [], "lane_px": 435, "near_lane": False}
-    assert notify.compose(far, "a.json") is None  # a candidate off the lane doesn't page
+    far = {"track": track, "other_instruments": [], "lane_px": 435, "heading_deg": 62, "paged": False}
+    assert notify.compose(far, "a.json") is None  # a candidate not moving like a sungrazer doesn't page
     title, lines, prio, _ = notify.compose(dict(far, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")
-    assert prio == "urgent" and "435 px off the Kreutz lane" in lines[0]  # confirmed, it does, and says so
-    near = dict(far, lane_px=12, near_lane=True)
+    assert prio == "urgent" and "62 deg off sunward" in lines[0]  # confirmed, it does, and says so
+    near = dict(far, heading_deg=3, paged=True)
     assert notify.compose(near, "a.json")[0] == "kreutz CCOR-1: candidate, UNREPORTED"
     assert notify.compose({"track": track, "other_instruments": []}, "a.json")[2] == "high"  # older file: pages
+    old = dict(far, near_lane=False); del old["paged"]; del old["heading_deg"]
+    assert notify.compose(old, "a.json") is None  # a file from before the heading gate
+    assert "435 px off the Kreutz lane" in notify.compose(dict(old, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")[1][0]
     pend = {"alert": "/data/live/alerts/20261017T0345_1645_609.json", "misses": 0, "track": track,
             "points": [], "t": datetime(2026, 10, 17, 3, 45, 25), "x": 1645.0, "y": 609.0, "vx": -3.5, "vy": 0.5,
-            "known": None, "others": [], "lane_px": 435, "near_lane": False}
+            "known": None, "others": [], "lane_px": 435, "heading_deg": 62, "paged": False}
     f, = live.status([], [pend], datetime(2026, 10, 17, 3, 45, 25), [], datetime(2026, 10, 17, 4, 0))["following"]
-    assert f["stage"] == "candidate" and f["near_lane"] is False and f["lane_px"] == 435
+    assert f["stage"] == "candidate" and f["paged"] is False and f["heading_deg"] == 62
+
+
+def test_pageworthy_wants_a_sunward_track_at_sungrazer_speed():
+    from kreutz.instrument import INSTRUMENTS
+    sun = INSTRUMENTS["ccor1"].sun_xy
+    comet = {"x": 1519.0, "y": 1422.0, "vx": -8.5, "vy": -4.5}      # Ruan's comet, 2026-10-21 11:00
+    satellite = {"x": 1664.0, "y": 415.0, "vx": -7.0, "vy": 2.0}     # the glint of 2026-10-21 07:00
+    sideways = {"x": 1406.0, "y": 307.0, "vx": -7.5, "vy": -4.0}     # noise, 2026-10-21 12:45
+    creeper = {"x": 1652.0, "y": 608.0, "vx": -1.0, "vy": -2.0}      # the morning ghost
+    assert live.pageworthy(comet, sun)
+    assert round(live.sunward(comet, sun)[0]) == 14
+    assert not live.pageworthy(satellite, sun) and round(live.sunward(satellite, sun)[0]) == 24
+    assert not live.pageworthy(sideways, sun)
+    assert not live.pageworthy(creeper, sun)  # sunward enough, but 2.2 px/frame
 
 
 def test_status_keeps_the_match_on_an_ended_object():
