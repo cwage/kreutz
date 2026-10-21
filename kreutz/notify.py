@@ -13,8 +13,9 @@ what fired and gives the kreutz.report command to run at a computer,
 which measures the object and prints the block for Sungrazer's form.
 A comet somebody has already reported (the file's "known") gets a single
 low-priority message when it's confirmed, and nothing at the candidate
-stage. Nor does a candidate far from the Kreutz lane (the file's
-"near_lane" false: more than lane.MATCH_PX from any archived track);
+stage. Nor does a candidate that doesn't move like a sungrazer (the
+file's "paged" false: pointed more than live.PAGE_HEADING off the Sun, or
+slower than the instrument's page_speed; older files say "near_lane");
 the watcher keeps following it, and it pages if it's confirmed, with
 the distance in the message.
 """
@@ -56,12 +57,13 @@ def compose(d, name):
         return (f"{who}: known comet, {known['reporter']}'s ({known['telescope']})",
                 [f"Reported {posted} UTC, matched by {known['how']}; held {d['frames']} frames, {d['note']}.",
                  "Measure it anyway:", cmd], "low", "comet")
-    far = isinstance(d, dict) and d.get("near_lane") is False
+    far = isinstance(d, dict) and (d.get("paged") is False if "paged" in d else d.get("near_lane") is False)
     if far and not confirmed:
         return None
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
     if far:
-        hint += f"; {d['lane_px']} px off the Kreutz lane"
+        hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d
+                 else f"; {d['lane_px']} px off the Kreutz lane")
     if confirmed:
         return (f"{who}: CONFIRMED, report ready" if not others else f"{who}: confirmed, likely known",
                 [f"Held {d['frames']} frames, {d['note']}; {hint}.", "Measure and get the form block:", cmd],
