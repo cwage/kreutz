@@ -629,3 +629,49 @@ def test_page_lists_every_instrument_and_redirects_old_pages(tmp_path):
     assert "instruments.json" in (tmp_path / "index.html").read_text()
     assert "url=../index.html" in (tmp_path / "live" / "status.html").read_text()
     assert not (tmp_path / "live-ccor2").exists()  # no watcher has run there: nothing made
+
+
+def _audit_report():
+    t0 = datetime(2026, 10, 16, 10, 0, 25)
+    r = {"id": "report_xx_1", "reporter": "X", "group": "Kreutz", "kind": "Potential Comet"}
+    return r, [(t0, 1500.0, 1200.0), (t0 + timedelta(minutes=30), 1470.0, 1188.0)]
+
+
+def _audit_record(kind, alert=None, x=1470.0, y=1188.0):
+    rec = {"kind": kind, "decided_utc": "2026-10-16T10:45:00", "first": "2026-10-16T10:00:25",
+           "last": "2026-10-16T10:30:25", "x": x, "y": y, "vx": -15.0, "vy": -6.0}
+    if alert:
+        rec["alert"] = f"/data/live/alerts/{alert}.json"
+    return rec
+
+
+def test_audit_judges_reports_against_what_the_watcher_did():
+    from kreutz import audit
+    r, pts = _audit_report()
+    later = pts[-1][0] + timedelta(hours=3)
+
+    def judge(*recs, fate=None, newest=later, chains=()):
+        cands = audit.candidates(list(recs), {"chains": list(chains)})
+        return audit.judge(r, pts, cands, fate or {}, newest)[0]
+
+    alert = _audit_record("alert", "a")
+    assert judge(alert, fate={"a": "confirmed"}) == "OK"
+    assert judge(alert, fate={"a": "faded"}) == "LOST"
+    assert judge(_audit_record("star")) == "VETO"
+    assert judge(_audit_record("star", x=900.0)) == "MISS"  # nowhere near it
+    assert judge() == "MISS"
+    assert judge(newest=pts[-1][0] + timedelta(hours=1)) is None  # not due yet
+    chain = [{"time": "2026-10-16T10:30:25", "x": 1470.0, "y": 1188.0, "vx": -15.0, "vy": -6.0}]
+    assert judge(chains=[chain]) is None  # still being tracked
+    # the watcher's own match counts even where positions don't
+    far = dict(_audit_record("reported", "b", x=900.0), report="X report_xx_1 (CCOR1)")
+    assert judge(far) == "OK"
+
+
+def test_audit_false_alerts_skip_matched_ones():
+    from kreutz import audit
+    log = [_audit_record("alert", "a"), _audit_record("faded", "a"),
+           _audit_record("alert", "b"), _audit_record("faded", "b"),
+           _audit_record("alert", "c"), _audit_record("confirmed", "c")]
+    assert set(audit.false_alerts(log)) == {"a", "b"}
+    assert set(audit.false_alerts(log, matched={"b"})) == {"a"}
