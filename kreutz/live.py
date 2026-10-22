@@ -19,7 +19,8 @@ motion runs more than lane.FLOW_ANGLE from the Kreutz flow there, as a
 ghost if the same pixels held the same rise and fall at this time
 yesterday (vet.same_as_yesterday: the eclipse-season stray light comes
 back daily), and as a line if its brightest frame shows a streak rather
-than a point (vet.line_like). A
+than a point (vet.line_like), or its own stack is a line (vet.line_stack:
+CCOR-2's radial stray-light stripes move exactly like a sungrazer). A
 follow-up is rejected rather than confirmed when its measured frames
 don't lie on a line, don't move, or run against the lane; the
 eclipse-season glare feature that was confirmed on 2026-10-11 fails all
@@ -97,7 +98,7 @@ from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, f
 from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_ROWS, _known_by_position
-from .vet import STATIONARY, follow, line_like, same_as_yesterday
+from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday
 
 FEED = INSTRUMENT.feed
 POLL_S = 120
@@ -898,9 +899,10 @@ def main():
                         continue
                     # what the significance maps say: the same thing was here
                     # at this time yesterday (a stray-light ghost), or it's a
-                    # line rather than a point
+                    # line rather than a point, in its brightest frame or in
+                    # its own stack (CCOR-2's radial striping)
                     vetoed = False
-                    for kind, check in (("ghost", same_as_yesterday), ("line", line_like)):
+                    for kind, check in (("ghost", same_as_yesterday), ("line", line_like), ("line", line_stack)):
                         try:
                             why = check(seq, last, c["x"], c["y"], c["vx"], c["vy"])
                         except Exception as e:  # a check that can't run mustn't hold up an alert

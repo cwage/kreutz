@@ -182,6 +182,22 @@ SHAPE_R = 25       # px around the peak looked at
 LINE_LEN = 15.0    # px: a component through the peak, above half of it, longer than this is a line
 LINE_RATIO = 4.0   # or more elongated than this
 
+# The track's own stack (line_stack): the last STACK_N significance maps
+# shifted along the track and summed, as the search sums them. A point
+# source lands on one pixel and stacks to a blob; a stray-light stripe or
+# ray lying along the track stacks to a line, however the frames are
+# shifted, and CCOR-2's radial striping moves exactly like a sungrazer
+# in heading and speed, so nothing kinematic rejects it. Over every alert
+# on record (2026-10-08..22): the 15 real CCOR-1 comets' stacks were at
+# most 2.8:1 and 13 px long above STACK_SIGMA; the eight CCOR-2 striping
+# alerts of 2026-10-21/22 were 6.7:1 to 30:1 and 24 to 98 px, and six
+# CCOR-1 false alerts 4.5:1 to 10.7:1 and 16 to 29 px.
+STACK_N = 8
+STACK_HALF = 30
+STACK_SIGMA = 3.0        # the bright region is the stack above this, per unit stack
+STACK_LINE_RATIO = 4.0   # the component through the peak, more elongated than this
+STACK_LINE_LEN = 20.0    # and longer than this (4 sigma along its long axis), is a line
+
 
 def extent(sig, r0, c0):
     """(length px, elongation) of the connected region of sig above half
@@ -196,6 +212,49 @@ def extent(sig, r0, c0):
     ev = np.sort(np.linalg.eigvalsh(np.cov(np.vstack([rr, cc]))))
     major, minor = max(ev[1], 1e-6), max(ev[0], 1 / 12)  # a pixel's own spread is 1/12
     return float(np.sqrt(12 * major)), float(np.sqrt(major / minor))
+
+
+def stack_shape(seq: Sequence, last: int, x, y, vx, vy, n=STACK_N, half=STACK_HALF):
+    """The track's stack through frame `last`: (peak within 3 px of the
+    track, axis ratio, length, area) of the component above STACK_SIGMA
+    that holds the peak, in a (2*half+1) square around the track's
+    position in frame `last`. The stack is divided by sqrt(frames), so it
+    reads in sigma like the search's score."""
+    H, W = seq.shape
+    size = 2 * half + 1
+    stack = np.zeros((size, size), np.float32)
+    frames = 0
+    for i in range(max(0, last - n + 1), last + 1):
+        k = round((seq.times[i] - seq.times[last]) / CADENCE)
+        r0, c0 = int(round(H - 1 - (y + vy * k))), int(round(x + vx * k))
+        if r0 - half < 0 or c0 - half < 0 or r0 + half + 1 > H or c0 + half + 1 > W:
+            continue
+        stack += np.nan_to_num(seq.significance(i)[r0 - half:r0 + half + 1, c0 - half:c0 + half + 1])
+        frames += 1
+    if not frames:
+        return 0.0, 1.0, 0.0, 0
+    stack /= np.sqrt(frames)
+    win = stack[half - 3:half + 4, half - 3:half + 4]
+    pr, pc = np.unravel_index(np.argmax(win), win.shape)
+    pr, pc = pr + half - 3, pc + half - 3
+    peak = float(stack[pr, pc])
+    labels, _ = label(stack > STACK_SIGMA)
+    comp = labels == labels[pr, pc] if labels[pr, pc] else np.zeros_like(labels, bool)
+    area = int(comp.sum())
+    if area < 3:
+        return peak, 1.0, 0.0, area
+    ys, xs = np.nonzero(comp)
+    ev = np.linalg.eigvalsh(np.cov(np.stack([xs, ys])))
+    ratio = float(np.sqrt(max(ev[1], 1e-9) / max(ev[0], 1e-6)))
+    return peak, ratio, float(4 * np.sqrt(max(ev[1], 0.0))), area
+
+
+def line_stack(seq: Sequence, last: int, x, y, vx, vy):
+    """Why the track's own stack is a line rather than a point, or None."""
+    _, ratio, length, _ = stack_shape(seq, last, x, y, vx, vy)
+    if ratio >= STACK_LINE_RATIO and length >= STACK_LINE_LEN:
+        return f"a line in its own stack: {length:.0f} px long, {ratio:.0f}:1"
+    return None
 
 
 def line_like(seq: Sequence, last: int, x, y, vx, vy):
