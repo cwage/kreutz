@@ -701,3 +701,35 @@ def test_audit_false_alerts_skip_matched_ones():
            _audit_record("alert", "c"), _audit_record("confirmed", "c")]
     assert set(audit.false_alerts(log)) == {"a", "b"}
     assert set(audit.false_alerts(log, matched={"b"})) == {"a"}
+
+
+def _stack_seq(maps, t0=datetime(2026, 10, 22, 5, 0, 14)):
+    import types
+    return types.SimpleNamespace(times=[t0 + timedelta(minutes=15) * i for i in range(len(maps))],
+                                 shape=maps[0].shape, significance=lambda i: maps[i])
+
+
+def test_line_stack_vetoes_a_stripe_but_not_a_moving_point():
+    from kreutz import vet
+    rng = np.random.default_rng(3)
+    H, W = 200, 200
+    yy, xx = np.mgrid[0:H, 0:W]
+    vx, vy = -4.0, -4.0  # px/frame, report coords (y down)
+    x8, y8 = 100.0, 100.0  # where the track is in the last frame
+    point, stripe = [], []
+    for i in range(8):
+        k = i - 7
+        x, y = x8 + vx * k, y8 + vy * k
+        r, c = H - 1 - y, x
+        noise = rng.normal(0, 1, (H, W)).astype(np.float32)
+        point.append(noise + 4.0 * np.exp(-((yy - r) ** 2 + (xx - c) ** 2) / (2 * 1.5 ** 2)))
+        # a static diagonal band lying along the track's direction: the track
+        # goes down-left in array terms (row up as y falls, col down with x)
+        d = np.abs((yy - (H - 1 - y8)) + (xx - x8)) / np.sqrt(2)
+        stripe.append(noise + 2.0 * np.exp(-d ** 2 / (2 * 2.0 ** 2)))
+    peak, ratio, length, area = vet.stack_shape(_stack_seq(point), 7, x8, y8, vx, vy)
+    assert peak > 8 and ratio < 2.0 and length < 15, (peak, ratio, length, area)
+    assert vet.line_stack(_stack_seq(point), 7, x8, y8, vx, vy) is None
+    peak, ratio, length, area = vet.stack_shape(_stack_seq(stripe), 7, x8, y8, vx, vy)
+    assert ratio >= 4 and length >= 20, (peak, ratio, length, area)
+    assert vet.line_stack(_stack_seq(stripe), 7, x8, y8, vx, vy).startswith("a line in its own stack")
