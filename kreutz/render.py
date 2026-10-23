@@ -35,7 +35,7 @@ separate step and a matter of taste: style.py has reference presets.
 
 import argparse
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 from astropy.io import fits
@@ -238,10 +238,10 @@ def main():
         t, x, y, vx, vy = datetime.fromisoformat(c["time"][:19]), c["x"], c["y"], c["vx"], c["vy"]
     else:
         t, x, y, vx, vy = datetime.fromisoformat(args.time), args.x, args.y, args.vx, args.vy
-    t = t.replace(second=INSTRUMENT.second)
-    warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
-    seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
-    i0 = seq.times.index(t)
+    warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
+    seq = Sequence(frame_paths(t - warm, t + CADENCE * (args.ahead + 1)))
+    i0 = seq.index(t)
+    t = seq.times[i0]
     track = follow(seq, i0, x, y, vx, vy, args.back, args.ahead, args.lost)
     idx = sorted(track)
     out = DATA / f"render{INSTRUMENT.tag}" / (args.name or f"{t:%Y%m%dT%H%M}_{x:.0f}_{y:.0f}")

@@ -609,6 +609,108 @@ def test_instruments_name_their_own_frames_and_directories():
     assert c2.lane_samples.name == "lane-samples-ccor2.json"
 
 
+def test_lasco_frames_are_named_by_time_and_kept_apart():
+    from kreutz.instrument import INSTRUMENTS
+    c2 = INSTRUMENTS["c2"]
+    assert c2.name_re.search("C2_05_20261022T031233_23903880.fts").group(1) == "20261022T031233"
+    assert not c2.name_re.search("23903880.fts")
+    assert c2.glob("20261022T0312*") == "C2_05_20261022T0312*_*.fts"
+    assert c2.frames_dir.parts[-2:] == ("c2", "l05") and c2.tag == "-c2"
+    assert c2.cadence == timedelta(minutes=12) and c2.shape == (1024, 1024)
+
+
+def test_lasco_index_keeps_the_synoptic_sequence_only():
+    from kreutz import lasco
+    text = """  FILE NAME           OBSERVATION     TEL   EXPOSE   NUMBER OF     STARTING    FILTER POLAR   LEB
+22999706.fts    2025/08/19  00:00:05   C2    25.1   1024   1024     20      1  Orange  Clear   Normal       0.0000  4179
+22999707.fts    2025/08/19  00:12:05   C2    25.8   1024   1024     20      1  Blue    Clear   Normal       0.0000  4179
+22999708.fts    2025/08/19  00:24:05   C2    25.1    512    512     20      1  Orange  Clear   Normal       0.0000  4179
+22999709.fts    2025/08/19  00:36:05   C2    25.1   1024   1024     20      1  Orange  +60deg  Normal       0.0000  4179
+32829961.fts    2025/08/19  00:06:05   C3    17.6   1024   1024     20      1  Clear   Clear   Normal       0.0000  4180
+"""
+    assert lasco.parse_index(text, "C2") == [(datetime(2025, 8, 19, 0, 0, 5), "22999706.fts")]
+    assert lasco.parse_index(text, "C3") == [(datetime(2025, 8, 19, 0, 6, 5), "32829961.fts")]
+
+
+def test_lasco_north_up_turns_the_roll_away():
+    from kreutz import lasco
+    img = np.zeros((101, 101), np.float32)
+    img[50, 60] = 1.0  # 10 px along +col from the Sun at (50, 50)
+    # A roll of 90 deg: that pixel offset is 10 px north on the sky, so
+    # north up it's 10 rows up (rows count up, FITS order).
+    out = lasco.north_up(img, {"CROTA1": 90.0, "CRPIX1": 51.0, "CRPIX2": 51.0})
+    assert np.unravel_index(np.nanargmax(out), out.shape) == (60, 50)
+    out = lasco.north_up(img, {"CROTA1": 0.0, "CRPIX1": 51.0, "CRPIX2": 51.0})
+    assert out[50, 60] == 1.0
+
+
+def test_lasco_star_drift_is_the_suns_motion_along_the_ecliptic():
+    from kreutz import lasco
+    # C3 2026-09-15 05:18: stars measured (-0.02, +0.51) px/frame
+    dr, dc = lasco.star_drift(datetime(2026, 9, 15, 5, 18), {"CDELT1": 56.0})
+    assert abs(dc / 120 - 0.51) < 0.02 and abs(dr / 120) < 0.03
+    # faster at perihelion (early January) than at aphelion (early July):
+    # angular speed goes as 1/r^2, ((1 + e) / (1 - e))^2 with e = 0.0167
+    jan = lasco.star_drift(datetime(2026, 1, 3), {"CDELT1": 56.0})
+    jul = lasco.star_drift(datetime(2026, 7, 4), {"CDELT1": 56.0})
+    assert np.hypot(*jan) / np.hypot(*jul) == pytest.approx(1.069, abs=0.005)
+
+
+def test_frames_off_the_grid_are_kept_a_half_step_apart(tmp_path, monkeypatch):
+    from kreutz import frames
+    from kreutz.instrument import INSTRUMENTS
+    c2 = INSTRUMENTS["c2"]
+    monkeypatch.setattr(frames, "INSTRUMENT", c2)
+    monkeypatch.setattr(frames, "_NAME", c2.name_re)
+    monkeypatch.setattr(frames, "CADENCE", c2.cadence)
+    monkeypatch.setattr(frames, "L1B", tmp_path)
+    d = tmp_path / "2025/08/19"
+    d.mkdir(parents=True)
+    # 2025-08-22: a gap, then frames 10.6 min apart, one of them twice
+    # (5.6 min after the one before, as after the long gap that evening).
+    stamps = ["031205", "032405", "041740", "042817", "043351", "043851"]
+    for k, s in enumerate(stamps):
+        (d / f"C2_05_20250819T{s}_{22999706 + k}.fts").touch()
+    got = [frames.frame_time(p) for p in frames.frame_paths(datetime(2025, 8, 19), datetime(2025, 8, 19, 5))]
+    assert [f"{t:%H%M%S}" for t in got] == ["031205", "032405", "041740", "042817", "043851"]
+    seq = FakeSeq(got)
+    assert Sequence.index(seq, datetime(2025, 8, 19, 4, 28)) == 3
+    with pytest.raises(ValueError):
+        Sequence.index(seq, datetime(2025, 8, 19, 3, 50))
+
+
+def test_seasonal_lane_takes_the_season_and_widens_where_thin(monkeypatch):
+    from kreutz import lane
+    from kreutz.instrument import INSTRUMENTS
+    monkeypatch.setattr(lane, "INSTRUMENT", INSTRUMENTS["c3"])
+    monkeypatch.setattr(lane, "SEASON_MIN", 3)
+    # (x, y, vx, vy, score, time): September in two years, one in late
+    # December, one in early January (14 days apart across the new year)
+    S = [[800, 700, -2, -2, 0, "2024-09-10T00:00:00"], [801, 701, -2, -2, 0, "2025-09-20T00:00:00"],
+         [802, 702, -2, -2, 0, "2026-09-14T00:00:00"], [300, 800, 2, -2, 0, "2025-12-25T00:00:00"],
+         [301, 801, 2, -2, 0, "2026-01-08T00:00:00"]]
+    assert len(lane.season_samples(S, datetime(2026, 9, 15))) == 3
+    # Jan 1: two within 15 days, so the window doubles and still has two,
+    # then doubles again (60 days) and stops there
+    assert len(lane.season_samples(S, datetime(2027, 1, 1))) == 2
+    monkeypatch.setattr(lane, "INSTRUMENT", INSTRUMENTS["ccor1"])
+    assert lane.season_samples(S, datetime(2026, 9, 15)) == S  # one lane all year
+
+
+def test_season_sector_follows_the_samples_and_ignores_strays(monkeypatch):
+    from kreutz import lane
+    from kreutz.instrument import INSTRUMENTS
+    monkeypatch.setattr(lane, "INSTRUMENT", INSTRUMENTS["c3"])
+    sun = (500.0, 500.0)
+    # 30 samples 300 px out at -40 deg +-10, and three strays straight up
+    angs = np.radians(np.linspace(-50, -30, 30))
+    S = [[500 + 300 * np.cos(a), 500 - 300 * np.sin(a), 0, 0, 0, "2026-09-15T00:00:00"] for a in angs]
+    S += [[500, 200, 0, 0, 0, "2026-09-15T00:00:00"]] * 3
+    monkeypatch.setattr(lane, "lane_samples", lambda: S)
+    center, half = lane.season_sector(datetime(2026, 9, 15), sun)
+    assert abs(center + 40) < 1 and abs(half - (10 + lane.SECTOR_MARGIN)) < 1
+
+
 def test_cosmic_rays_flags_hits_and_streaks_but_not_psf_points():
     from kreutz import frames
     rng = np.random.default_rng(1)
@@ -650,7 +752,8 @@ def test_page_lists_every_instrument_and_redirects_old_pages(tmp_path):
     (tmp_path / "live").mkdir()
     page.write(tmp_path)
     insts = json.load(open(tmp_path / "instruments.json"))
-    assert [(i["key"], i["live"]) for i in insts] == [("ccor1", "live"), ("ccor2", "live-ccor2")]
+    assert [(i["key"], i["live"]) for i in insts] == [("ccor1", "live"), ("ccor2", "live-ccor2"),
+                                                      ("c2", "live-c2"), ("c3", "live-c3")]
     assert insts[1]["measure_prefix"].startswith("KREUTZ_INSTRUMENT=ccor2 ")
     assert "instruments.json" in (tmp_path / "index.html").read_text()
     assert "url=../index.html" in (tmp_path / "live" / "status.html").read_text()

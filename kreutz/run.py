@@ -20,7 +20,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, CADENCE, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 from .search import search
 
 LOOSE = 4.5
@@ -36,7 +36,7 @@ def main():
                     help="lane-constrained search (lane.py) instead of the full search")
     args = ap.parse_args()
     end = args.end or args.start + timedelta(days=1)
-    warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n)
+    warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n)
     seq = Sequence(frame_paths(args.start - warm, end))
     first = next(i for i, t in enumerate(seq.times) if t >= args.start)
     first = max(first, BG_FRAMES + BG_SKIP + args.n)
@@ -45,7 +45,7 @@ def main():
     field = None
     if args.lane:
         from .lane import build_field
-        field = build_field(seq.shape)
+        field = build_field(seq.shape, when=args.start)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as fh:
         for last in range(first, len(seq.paths)):

@@ -17,7 +17,7 @@ persistent first; look.py renders a vetting strip for any of them.
 
 import argparse
 import json
-
+from datetime import timedelta
 
 import numpy as np
 
@@ -42,6 +42,7 @@ KNOWN_PX = 10
 KNOWN_GROW = 1.5
 KNOWN_HOURS = 12
 KNOWN_BACK_HOURS = 12
+PER_HOUR = timedelta(hours=1) / FRAME  # frames
 # Kreutz comets speed up toward the Sun, so a straight line backward from
 # a report overshoots (a comet at 12 px/frame when measured was doing 9
 # seven hours earlier). For Kreutz reports the backward extrapolation
@@ -71,7 +72,7 @@ def report_tracks(days, reps=None):
     return list(out.values())
 
 
-FRAME_ROWS = 1920  # CCOR-1 frame height, for report y <-> row
+FRAME_ROWS, FRAME_COLS = INSTRUMENT.shape  # for report y <-> row, and the lane's field
 
 
 def known_as(track, reps, others=None, field=None):
@@ -114,12 +115,12 @@ def _known_by_position(track, reps, field=None):
         back = None  # lane-flow path before the report, computed on demand
         for c in track:
             k = (c["t"] - t1) / FRAME
-            if not -n - KNOWN_BACK_HOURS * 4 <= k <= KNOWN_HOURS * 4:
+            if not -n - KNOWN_BACK_HOURS * PER_HOUR <= k <= KNOWN_HOURS * PER_HOUR:
                 continue
             gap = max(0.0, k, -n - k)  # frames outside the reported span
             if k < -n and field is not None and r.get("group") == "Kreutz":
                 if back is None:
-                    back = _flow_back(field, x0, y0, KNOWN_BACK_HOURS * 4)
+                    back = _flow_back(field, x0, y0, round(KNOWN_BACK_HOURS * PER_HOUR))
                 j = int(round(-n - k)) - 1
                 if j < 0 or j >= len(back):
                     continue
@@ -149,7 +150,7 @@ def shortlist(runs, threshold=THRESHOLD, link=LINK, start=None, end=None):
     days = sorted({t.date() for t in by_time})
     all_reps = all_reports()
     reps = report_tracks(days, all_reps)
-    field = field_or_none((FRAME_ROWS, 2048))
+    field = field_or_none((FRAME_ROWS, FRAME_COLS), when=days[len(days) // 2])
     out = []
     for tr in tracks(by_time, threshold, link):
         fire = tr[link - 1]

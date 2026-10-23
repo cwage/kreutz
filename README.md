@@ -94,6 +94,48 @@ masks the wide ones (15 px and more) that a median fill can't reach.
 KREUTZ_INSTRUMENT=ccor2 docker compose run --rm -d kreutz kreutz.sync --loop
 ```
 
+### LASCO C2 and C3 (in progress, #53)
+
+`KREUTZ_INSTRUMENT=c2` (or `c3`) works on SOHO's LASCO coronagraphs.
+Their level 0.5 frames come from NASA (`kreutz/lasco.py`): the last ~10
+days a few minutes behind, the archive from 2000 on about three weeks
+behind, so `kreutz.fetch` and `kreutz.sync` both work. Only the ~12-minute
+synoptic sequence is taken, stored as `data/c2/l05/.../C2_05_<time>_<seq>.fts`,
+and every frame is loaded bias-subtracted, per second of exposure, and
+rotated to solar north up: SOHO's roll flips by 180 degrees every few
+months. Sungrazer's C2 positions are on that north-up frame (checked on
+comets reported at roll -0.5 and -173 degrees).
+
+What differs from CCOR, all from `instrument.py`:
+
+- Cadence 12 minutes, and frames are stacked at their true time offsets
+  (LASCO runs at 10.6 minutes for hours at a time); windows may miss two
+  frames, since SOHO skips two in a row several times a day.
+- The search stays 14 px from the frame edge, not 30 (LASCO's edges are
+  as quiet as the middle, and C2's comets enter across the right edge at
+  up to 20 px/frame), and C2 searches up to 24 px/frame.
+- Where Kreutz comets come in swings through the year (C3: lower right at
+  -40 degrees in Aug-Oct, lower left at -141 in Feb-Apr), so the lane and
+  the search sector are the season's: `lane.season_samples` takes the
+  samples within 15 days of the date in any year (more where they're
+  thin). The lanes, `kreutz/lane-samples-c2.json` and `-c3.json`, are
+  built from the 2024-2026 reports with `kreutz.lanesamples --from-reports`.
+- Stars are used and masked down to 200 px (C2) and 100 px (C3) from the
+  Sun, with an 8 px mask. C2's small field rarely has 20 stars bright
+  enough to align on among its particle hits, so its star drift is the
+  Sun's motion along the ecliptic (`lasco.star_drift`; on C3, where the
+  stars can be measured, the two agree to 2%).
+
+On the test days (C2 2026-09-16, C3 2026-09-15) the 4-frame lane search
+found every reported Kreutz comet bright enough to see, with no
+unexplained tracks at 5.5 sigma; C3's caught a Potential Comet 2.3 hours
+before it was posted.
+
+```
+KREUTZ_INSTRUMENT=c3 docker compose run --rm kreutz kreutz.fetch 2026-09-14 2026-09-15
+KREUTZ_INSTRUMENT=c3 docker compose run --rm kreutz kreutz.run 2026-09-14T18:00 2026-09-15T18:00 --n 4 --lane
+```
+
 Modules, each with usage in its docstring:
 
 | module | what it does |
@@ -114,7 +156,7 @@ Modules, each with usage in its docstring:
 | `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
 | `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
 | `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html` |
-| `kreutz.sync` | pull everything on the SWPC feed to disk (CCOR-2, which the watcher can't run on yet; `--loop` to keep up) |
+| `kreutz.sync` | pull everything on the instrument's real-time feed to disk, beyond the hours the watcher needs (`--loop` to keep up) |
 | `kreutz.lanesamples` | lane samples for `lane.py` from archive runs: the windows of tracks matching the instrument's Kreutz reports |
 
 ### Pictures
