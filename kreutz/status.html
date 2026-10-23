@@ -20,6 +20,7 @@
            font-weight: 600; color: #000; margin: 0 6px 4px 0; max-width: 100%; box-sizing: border-box; }
   .candidate { background: var(--hot); } .confirmed { background: var(--ok); }
   .known { background: var(--known); } .quiet { background: var(--bad); }
+  .hint { background: none; color: var(--known); border: 1px solid var(--known); font-weight: 500; } .hint a { color: var(--known); }
   .lead { background: var(--ok); } .lag { background: var(--line); color: var(--fg); font-weight: 500; }
   .row { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
   .row img { width: 160px; border-radius: 4px; background: #000; flex: none; }
@@ -80,14 +81,22 @@ const ago = iso => {
 };
 const link = (k, text) => k && k.url ? `<a href="${esc(k.url)}" target="_blank" rel="noopener">${text}</a>` : text;
 // The Sungrazer report that fits the object, as of the last snapshot: by
-// position (a report from this instrument), by time+lane (another coronagraph, decided at
-// alert time), or by time alone, which is only likely the same object.
-const reportBadge = k => {
+// position, a report from this instrument; or by time (and lane), a
+// report from another coronagraph that is only likely the same object.
+// Only a match by position means the object is reported here: one by time
+// leaves it unreported in this instrument, with the other report as a hint
+// (2026-10-23: a bright CCOR-1 comet read as "likely Chuck Fields's" off
+// a C3 report, and looked taken when nobody had reported it in CCOR-1).
+const reportedHere = k => !!k && k.how === 'position';
+const reportBadge = (k, inst) => {
   if (!k) return `<span class="badge candidate">UNREPORTED</span>`;
   const when = k.posted_utc ? ` ${hhmm(k.posted_utc)}` : '';
-  const how = [k.telescope, k.how === 'time' ? 'same time' : k.how && `by ${k.how}`].filter(Boolean).join(', ');
-  const text = k.how === 'time' ? `likely ${esc(k.reporter)}'s,${when}` : `reported by ${esc(k.reporter || k.id)}${when}`;
-  return `<span class="badge known">${link(k, `${text}${how ? ` (${esc(how)})` : ''}`)}</span>`;
+  if (reportedHere(k)) {
+    return `<span class="badge known">${link(k, `reported by ${esc(k.reporter || k.id)}${when}${k.telescope ? ` (${esc(k.telescope)})` : ''}`)}</span>`;
+  }
+  const here = inst ? ` in ${esc(inst.label)}` : '';
+  const hint = `maybe ${esc(k.reporter)}'s ${esc(k.telescope || 'other-instrument')} comet,${when} (same time, not by position)`;
+  return `<span class="badge candidate">UNREPORTED${here}</span><span class="badge hint">${link(k, hint)}</span>`;
 };
 const bust = (p, iso) => p ? `${p}?${encodeURIComponent(iso || '')}` : null;
 const utc = iso => Date.parse(iso.endsWith('Z') ? iso : iso + 'Z');
@@ -122,7 +131,7 @@ function card(f) {
   const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
   return `<div class="row">
     <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f._key)}>
-    <div>${instBadge(f)}${stage}${reportBadge(f.report)}${leadBadge(f.report, f.decided_utc, f.confirmed_utc)}
+    <div>${instBadge(f)}${stage}${reportBadge(f.report, f._inst)}${reportedHere(f.report) ? leadBadge(f.report, f.decided_utc, f.confirmed_utc) : ''}
       <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
         · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
@@ -161,12 +170,12 @@ function row(hist) {
   // may be down when the page is written)
   const matched = last.report || [...hist].reverse().map(r => r.report).find(Boolean) || null;
   // noise that faded, or a star, isn't 'unreported'; only a real match is worth a badge
-  const report = JUNK.includes(last.kind) && !matched ? '' : reportBadge(matched);
+  const report = JUNK.includes(last.kind) && !matched ? '' : reportBadge(matched, last._inst);
   // when it was found and confirmed: on the record itself (from the alert
   // files), else from whatever of its history is in the window
   const found = last.found_utc || (hist.find(r => ['alert', 'reported'].includes(r.kind)) || {}).decided_utc;
   const confirmed = last.confirmed_utc || (hist.find(r => r.kind === 'confirmed') || {}).decided_utc;
-  const lead = report && matched ? leadBadge(matched, found, confirmed) : '';
+  const lead = report && reportedHere(matched) ? leadBadge(matched, found, confirmed) : '';
   const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
               : last.kind === 'ended' ? ` after ${last.frames} frames`
               : last.note ? ` ${esc(last.note)}` : '';
