@@ -5,6 +5,7 @@ changes."""
 from datetime import datetime, timedelta, timezone
 
 import json
+import types
 import numpy as np
 import pytest
 
@@ -709,6 +710,28 @@ def test_season_sector_follows_the_samples_and_ignores_strays(monkeypatch):
     monkeypatch.setattr(lane, "lane_samples", lambda: S)
     center, half = lane.season_sector(datetime(2026, 9, 15), sun)
     assert abs(center + 40) < 1 and abs(half - (10 + lane.SECTOR_MARGIN)) < 1
+
+
+def test_follow_measures_in_the_instruments_steps_not_the_first_gap(monkeypatch):
+    from kreutz import frames, vet
+    from kreutz.instrument import INSTRUMENTS
+    monkeypatch.setattr(vet, "CADENCE", INSTRUMENTS["c2"].cadence)
+    # LASCO-like: a 36-minute gap first, then 12-minute steps; a point
+    # source moving (-3, 0) px per 12 minutes
+    t0 = datetime(2026, 9, 16, 12, 0)
+    times = [t0] + [t0 + timedelta(minutes=36 + 12 * k) for k in range(12)]
+    H = W = 200
+    yy, xx = np.mgrid[:H, :W]
+
+    def raw(i):
+        x = 170 - 3 * (times[i] - t0) / timedelta(minutes=12)
+        return (50 * np.exp(-((xx - x) ** 2 + (yy - 100) ** 2) / (2 * frames.PSF_SIGMA ** 2))).astype(np.float32)
+    seq = types.SimpleNamespace(times=times, shape=(H, W), raw=raw,
+                                _displacement=lambda j, i: (lambda r, c: (0.0, 0.5)))
+    last = len(times) - 1
+    x_last = 170 - 3 * (times[last] - t0) / timedelta(minutes=12)
+    m = vet.follow(seq, last, x_last, H - 1 - 100, -3.0, 0.0)
+    assert m.measured and abs(m.vx + 3.0) < 0.2 and abs(m.vy) < 0.2
 
 
 def test_cosmic_rays_flags_hits_and_streaks_but_not_psf_points():

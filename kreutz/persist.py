@@ -18,7 +18,7 @@ of their spread.
 
 import numpy as np
 
-from .frames import Sequence
+from .frames import CADENCE, Sequence
 
 AHEAD = 6
 PATH_R = 2
@@ -65,7 +65,7 @@ def persistence(seq: Sequence, last: int, track):
                for j in range(CONTROL_N)]
     path, ctrl = [], [[] for _ in offsets]
     for i in range(last + 1, len(seq.paths)):
-        k = (seq.times[i] - seq.times[last]) / (seq.times[1] - seq.times[0])
+        k = (seq.times[i] - seq.times[last]) / CADENCE
         if k > AHEAD:
             break
         sig = seq.significance(i)

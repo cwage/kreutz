@@ -67,9 +67,12 @@ def follow(seq: Sequence, last: int, x: float, y: float, vx: float, vy: float):
         i = last - k
         if i < 0:
             break
-        # frames before `last`, by time (a missing frame makes it jump)
-        kt = round((seq.times[last] - seq.times[i]) / (seq.times[1] - seq.times[0]))
-        if kt > FOLLOW_FRAMES:
+        # frames before `last`, by time (a missing frame makes it jump), in
+        # the instrument's steps: not the first two frames' spacing, which
+        # on LASCO is often a 24 or 36 minute gap, and not rounded (LASCO
+        # runs at 10.6 minutes against its 12 for hours at a time)
+        kt = (seq.times[last] - seq.times[i]) / CADENCE
+        if kt > FOLLOW_FRAMES + 0.5:
             break
         r0, c0 = int(round(H - 1 - py)), int(round(px))
         half = FOLLOW_R + 8
@@ -93,7 +96,7 @@ def follow(seq: Sequence, last: int, x: float, y: float, vx: float, vy: float):
             vx = np.polyfit(t, [p[1] for p in pts], 1)[0]
             vy = np.polyfit(t, [p[2] for p in pts], 1)[0]
         if i - 1 >= 0:
-            dt = (seq.times[i] - seq.times[i - 1]) / (seq.times[1] - seq.times[0])
+            dt = (seq.times[i] - seq.times[i - 1]) / CADENCE
             px, py = px - vx * dt, py - vy * dt
     if len(pts) >= 3:
         t = np.array([p[0] for p in pts])
