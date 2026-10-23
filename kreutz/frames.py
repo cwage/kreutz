@@ -7,6 +7,7 @@ by stacking crops along confirmed comets' reported positions, where only
 this convention puts the comet at the center.
 """
 
+import os
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -281,9 +282,13 @@ class Sequence:
         s = flatten(s)
         self._sig[i] = s.astype(np.float32)
         cached.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cached.with_suffix(".tmp.npy")
+        # Per-process temporary name: two processes computing the same map
+        # (a watcher and an archive run, or a stray second watcher) each write
+        # their own and rename it into place; with a shared name, the second
+        # rename finds the file gone (2026-10-22 15:30, a watcher crashed).
+        tmp = cached.with_name(f"{cached.stem}.{os.getpid()}.tmp.npy")
         np.save(tmp, s.astype(np.float16))
-        tmp.rename(cached)
+        tmp.replace(cached)
         return self._sig[i]
 
     def _background(self, i):
