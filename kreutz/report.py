@@ -20,11 +20,11 @@ speed; fewer gets a warning here, and so does an object that doesn't move
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 
-from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, CADENCE, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 from .render import follow
 from .vet import STATIONARY
 
@@ -74,7 +74,7 @@ def fit(points):
     than two points."""
     if len(points) < 2:
         return 0.0, 0.0, 0.0
-    k = np.array([(t - points[0][0]) / timedelta(minutes=15) for t, *_ in points])
+    k = np.array([(t - points[0][0]) / CADENCE for t, *_ in points])
     xs = np.array([p[1] for p in points]); ys = np.array([p[2] for p in points])
     px, py = np.polyfit(k, xs, 1), np.polyfit(k, ys, 1)
     resid = np.hypot(xs - np.polyval(px, k), ys - np.polyval(py, k)).max()
@@ -102,10 +102,11 @@ def main():
         t, x, y, vx, vy = datetime.fromisoformat(c["time"][:19]), c["x"], c["y"], c["vx"], c["vy"]
     else:
         t, x, y, vx, vy = datetime.fromisoformat(args.what[0]), *map(float, args.what[1:5])
-    t = t.replace(second=INSTRUMENT.second)
-    warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
-    seq = Sequence(frame_paths(t - warm, t + timedelta(minutes=15) * (args.ahead + 1)))
-    pts = measure(seq, seq.times.index(t), x, y, vx, vy, args.back, args.ahead)
+    warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
+    seq = Sequence(frame_paths(t - warm, t + CADENCE * (args.ahead + 1)))
+    i = seq.index(t)
+    t = seq.times[i]
+    pts = measure(seq, i, x, y, vx, vy, args.back, args.ahead)
     if not pts:
         print(f"# not seen in any frame within {args.back} before and {args.ahead} after {t:%Y-%m-%d %H:%M} UTC "
               "along that motion (no 4-sigma peak near the predicted position)", file=sys.stderr)

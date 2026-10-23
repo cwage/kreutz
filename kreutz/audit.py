@@ -42,7 +42,7 @@ from .instrument import CURRENT as INSTRUMENT
 from .lane import field_or_none
 from .live import LIVE
 from .reports import _fetch, parse
-from .shortlist import FRAME_ROWS, _known_by_position
+from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
 
 STATE = LIVE / "audit.json"
 MISS_AFTER = timedelta(hours=2)  # the watcher needs ~45 min of frames to decide; give it margin
@@ -146,7 +146,7 @@ def audit(since=None):
 
     fate = {_stem(r["alert"]): r["kind"] for r in log if r.get("alert")}
     cands = candidates(log, live)
-    field = field_or_none((FRAME_ROWS, 2048))
+    field = field_or_none((FRAME_ROWS, FRAME_COLS), when=newest)
     reps = fetch_reports(start)
     rp = {}
     for d in sorted({(newest - timedelta(days=n)).date() for n in range((newest - start).days + 2)}):

@@ -22,12 +22,13 @@ from scipy.ndimage import maximum_filter
 from .frames import CADENCE, INSTRUMENT, Sequence
 
 CLIP_SIGMA = 5.0
-SPEED_MAX = 12.5
+SPEED_MAX = INSTRUMENT.speed_max  # 12.5 for CCOR; see instrument.py
 # A window may be missing this many frames (a 30-minute gap is a single
 # missing frame, and those are the common kind: 13 of the 14 gaps in the
 # July 2025 benchmark week). The frames present are stacked at their true
-# time offsets; the score is normalized by how many there are.
-MAX_MISSING = 1
+# time offsets; the score is normalized by how many there are. (CCOR's
+# number; LASCO's is 2, instrument.py.)
+MAX_MISSING = INSTRUMENT.max_missing
 # Below this a "track" is something that doesn't move: a pixel that
 # flickers for a frame or two (first live alert, 2026-10-05 00:00, was
 # one). Of 81 Kreutz tracks reported in July-August 2025 only a couple
@@ -45,9 +46,10 @@ V_STEP = 0.5
 R_MIN, R_MAX = INSTRUMENT.r_min, INSTRUMENT.r_max
 ANGLE_CENTER = INSTRUMENT.angle_center  # deg counterclockwise from straight right of the Sun
 ANGLE_MAX = INSTRUMENT.angle_max        # deg either side of that
+# (None for LASCO, whose sector moves with the seasons: lane.season_sector)
 # Stay this far inside the frame: the outermost rows and columns carry
 # vignetting gradients that survive background subtraction.
-EDGE_PX = 30
+EDGE_PX = INSTRUMENT.edge_px  # 30 for CCOR; see instrument.py
 # Most frames in a window have to contribute: noise that stacks to a high
 # score usually does it with one hot frame and the rest near zero. The
 # search keeps anything where at least half the frames clear 1 sigma, so
@@ -103,8 +105,12 @@ def _roi(seq: Sequence):
     dx, dy = x - sx, -(y - sy)  # y up for the angle
     r = np.hypot(dx, dy)
     ang = np.degrees(np.arctan2(dy, dx))
-    off = (ang - ANGLE_CENTER + 180) % 360 - 180
-    m = (r >= R_MIN) & (r <= R_MAX) & (np.abs(off) <= ANGLE_MAX)
+    center, half = ANGLE_CENTER, ANGLE_MAX
+    if center is None:
+        from .lane import season_sector  # (lane imports this module)
+        center, half = season_sector(seq.times[-1], (sx, sy)) or (0.0, 180.0)
+    off = (ang - center + 180) % 360 - 180
+    m = (r >= R_MIN) & (r <= R_MAX) & (np.abs(off) <= half)
     m &= (rr >= EDGE_PX) & (rr < H - EDGE_PX) & (cc >= EDGE_PX) & (cc < W - EDGE_PX)
     rs, cs = np.nonzero(m)
     box = (slice(rs.min(), rs.max() + 1), slice(cs.min(), cs.max() + 1))
@@ -185,11 +191,16 @@ def _torch():
 
 def search(seq: Sequence, last: int, n: int, threshold: float):
     """Candidates in the window of n frames ending at frame `last`."""
-    idx, back = window_frames(seq, last, n)
+    idx, _ = window_frames(seq, last, n)
+    # Steps before the last frame at the true time offsets: CCOR's frames
+    # are whole steps apart, LASCO's run at 10.6 minutes for hours at a
+    # time against a 12-minute step, which rounding would turn into a
+    # third of a frame's motion of error over four frames.
+    back = np.array([(seq.times[last] - seq.times[i]) / CADENCE for i in idx])
     box, mask = _roi(seq)
     drow, dcol = seq.star_drift(last)
     vel = velocity_grid((dcol, -drow))
-    pad = int(np.ceil(SPEED_MAX * (n - 1))) + 1
+    pad = int(np.ceil(SPEED_MAX * max(n - 1, back.max()))) + 1  # (back can be 3.1 steps at n=4 on LASCO)
     frames = []
     for i in idx:
         s = seq.significance(i)[box]

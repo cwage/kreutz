@@ -23,7 +23,7 @@ from . import DATA
 from .instrument import CURRENT as INSTRUMENT
 
 L1B = INSTRUMENT.frames_dir
-CADENCE = timedelta(minutes=15)
+CADENCE = INSTRUMENT.cadence  # 15 min for CCOR, 12 for LASCO
 
 # Background = median of the frames before this one (only the past: a
 # real-time detector doesn't have the future), skipping the most recent:
@@ -42,7 +42,10 @@ STAR_FRAMES = 8
 # outside this radius from Sun center (inside it, the corona's structure
 # makes too many false points).
 STAR_Z = 10
-STAR_MIN_R = 350
+STAR_MIN_R = INSTRUMENT.star_min_r  # 350 for CCOR; see instrument.py
+# A star alignment on fewer matched stars than this is not trusted on
+# LASCO, which falls back to the modeled drift (Sequence._modeled_displacement).
+STAR_MATCHED = 20
 STAR_MASK_R = INSTRUMENT.star_mask_r  # 4 for CCOR-1; see instrument.py
 
 # Matched filter for a point source (the PSF is ~2 px across), minus a
@@ -97,7 +100,10 @@ def frame_paths(start, end):
     """L1b files with observation time in [start, end], in time order, on
     the standard 15-minute grid. CCOR-1 sometimes runs at 5-minute
     cadence for a while; the extra frames are dropped so every step
-    between frames means the same motion."""
+    between frames means the same motion. LASCO's frames aren't on a
+    grid (12 minutes apart, give or take a few seconds, now and then
+    closer): a frame less than half a step after the one before is
+    dropped instead."""
     paths = []
     d = start.date()
     while d <= end.date():
@@ -105,12 +111,20 @@ def frame_paths(start, end):
         # cadence, 2025-07-18 03:45-06:15) come as _0C and stand in for it.
         paths += (L1B / f"{d:%Y/%m/%d}").glob(INSTRUMENT.glob())
         d += timedelta(days=1)
-    paths = [p for p in paths if start <= frame_time(p) <= end
-             and frame_time(p).minute % 15 == 0]
-    return sorted(paths, key=frame_time)
+    paths = sorted((p for p in paths if start <= frame_time(p) <= end), key=frame_time)
+    if INSTRUMENT.second is not None:
+        return [p for p in paths if frame_time(p).minute % INSTRUMENT.cadence_min == 0]
+    kept = []
+    for p in paths:
+        if not kept or frame_time(p) - frame_time(kept[-1]) >= CADENCE / 2:
+            kept.append(p)
+    return kept
 
 
 def load(path):
+    if INSTRUMENT.source == "lasco":
+        from .lasco import load as load_lasco
+        return load_lasco(path)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # the files carry a BLANK on float data
         with fits.open(path) as h:
@@ -229,6 +243,14 @@ class Sequence:
         self.header = load(self.paths[0])[1]
         self.shape = (self.header["NAXIS2"], self.header["NAXIS1"])
         self._sun = None
+
+    def index(self, t):
+        """The frame taken at t: the nearest one, within half a step (frame
+        times carry seconds that reports and alerts round away)."""
+        i = min(range(len(self.times)), key=lambda i: abs(self.times[i] - t), default=None)
+        if i is None or abs(self.times[i] - t) > CADENCE / 2:
+            raise ValueError(f"no frame at {t:%Y-%m-%d %H:%M}")
+        return i
 
     def raw(self, i):
         if i not in self._raw:
@@ -361,6 +383,8 @@ class Sequence:
             return self._disp[key]
         a, b = self._sources(j), self._sources(i)
         if len(a) < 20 or len(b) < 20:
+            if INSTRUMENT.source == "lasco":
+                return self._modeled_displacement(j, i)
             raise ValueError(f"too few stars to align frames {j} and {i}")
         # Coarse: the most common displacement among all nearby pairs.
         reach = 2.5 * abs(i - j) + 4
@@ -394,7 +418,25 @@ class Sequence:
                          + k[4, a] * u * v + k[5, a] * v * v for a in (0, 1))
         field.matched = int(keep.sum())
         field.rms = float(np.std(res[keep]))
+        if field.matched < STAR_MATCHED and INSTRUMENT.source == "lasco":
+            return self._modeled_displacement(j, i)
         self._disp[key] = field
+        return field
+
+    def _modeled_displacement(self, j, i):
+        """The star drift from the Sun's motion (lasco.star_drift), for a
+        LASCO pair of frames with too few stars to measure it: C2's small
+        field often has only a handful bright enough among its particle
+        hits (2026-09-16: 1-5 matched of ~60 sources)."""
+        from .lasco import star_drift
+        vr, vc = star_drift(self.times[i], self.header)
+        days = (self.times[i] - self.times[j]).total_seconds() / 86400
+
+        def field(r, c, dr=np.float32(vr * days), dc=np.float32(vc * days)):
+            zero = np.zeros(np.broadcast(np.asarray(r), np.asarray(c)).shape, np.float32)
+            return zero + dr, zero + dc
+        field.matched, field.rms = 0, float("nan")
+        self._disp[(j, i)] = field
         return field
 
     def _star_mask(self, i):
@@ -422,9 +464,10 @@ class Sequence:
 
     def star_drift(self, i):
         """Star-field velocity (rows, cols) per frame at frame i, at the
-        middle of the search region (right of the Sun)."""
+        middle of the search region (right of the Sun: 700 px on CCOR's
+        2048-wide frames, less on a narrower one so it stays in the field)."""
         sr, sc = self.sun_rc()
-        dr, dc = self._displacement(i - 1, i)(sr, sc + 700)
+        dr, dc = self._displacement(i - 1, i)(sr, sc + min(700, 0.8 * (self.shape[1] - 1 - sc)))
         return float(dr), float(dc)
 
     def forget(self, before):

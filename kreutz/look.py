@@ -9,13 +9,13 @@ data/look/<time>_<x>_<y>.png.
 """
 
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 from PIL import Image
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, CADENCE, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 
 HALF = 40
 
@@ -54,9 +54,9 @@ def main():
     ap.add_argument("--back", type=int, default=7)
     ap.add_argument("--ahead", type=int, default=2)
     args = ap.parse_args()
-    warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
-    seq = Sequence(frame_paths(args.time - warm, args.time + timedelta(minutes=15) * (args.ahead + 1)))
-    i_ref = seq.times.index(args.time.replace(second=INSTRUMENT.second))
+    warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.back + 2)
+    seq = Sequence(frame_paths(args.time - warm, args.time + CADENCE * (args.ahead + 1)))
+    i_ref = seq.index(args.time)
     img = strip(seq, i_ref, args.x, args.y, args.vx, args.vy, args.back, args.ahead)
     out = DATA / f"look{INSTRUMENT.tag}" / f"{args.time:%Y%m%dT%H%M}_{args.x:.0f}_{args.y:.0f}.png"
     out.parent.mkdir(exist_ok=True)

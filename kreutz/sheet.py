@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from . import DATA
-from .frames import BG_FRAMES, BG_SKIP, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, CADENCE, INSTRUMENT, STAR_FRAMES, Sequence, frame_paths
 from .look import strip
 
 BACK, AHEAD = 7, 5
@@ -35,7 +35,7 @@ def make_sheets(cands, out, per=6):
     for c in sorted(cands, key=lambda c: c["t"]):
         if seq_day != c["t"].date():
             day = datetime.combine(c["t"].date(), datetime.min.time())
-            warm = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + BACK + 2)
+            warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + BACK + 2)
             seq = Sequence(frame_paths(day - warm, day + timedelta(days=1, hours=3)))
             seq_day = c["t"].date()
         try:

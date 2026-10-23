@@ -1,4 +1,4 @@
-"""Download archived coronagraph frames from NOAA NCEI.
+"""Download archived coronagraph frames from NOAA NCEI (LASCO: NASA's archive).
 
     docker compose run --rm kreutz kreutz.fetch 2025-07-17 [2025-07-19]
 
@@ -6,6 +6,8 @@ Full-resolution (2048x1920) calibrated frames, one every 15 minutes,
 ~9 MB each (~880 MB/day), into data/ccor1/l1b/YYYY/MM/DD/. Files already
 present are skipped, so an interrupted day just resumes. KREUTZ_INSTRUMENT
 picks the instrument (see instrument.py); CCOR-2 isn't in the archive yet.
+LASCO frames come from its own archive (lasco.py), into data/c2/l05/ or
+data/c3/l05/.
 """
 
 import argparse
@@ -70,9 +72,16 @@ def main():
         sys.exit(f"{INSTRUMENT.label} isn't in the NCEI archive; kreutz.live syncs its feed")
     d, end = args.start, args.end or args.start
     while d <= end:
-        keys = day_keys(d)
-        with ThreadPoolExecutor(WORKERS) as ex:
-            new = sum(ex.map(_download, keys))
+        if INSTRUMENT.source == "lasco":
+            from .lasco import day_frames
+            from .sync import pull
+            keys = day_frames(PREFIX, d)
+            with ThreadPoolExecutor(WORKERS) as ex:
+                new = sum(ex.map(lambda f: pull([f], _get), keys))
+        else:
+            keys = day_keys(d)
+            with ThreadPoolExecutor(WORKERS) as ex:
+                new = sum(ex.map(_download, keys))
         print(f"{d}: {len(keys)} frames, {new} downloaded", file=sys.stderr)
         d += timedelta(days=1)
 

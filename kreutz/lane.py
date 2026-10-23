@@ -19,6 +19,7 @@ The band searched is everywhere within BAND_PX of a sample.
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 from scipy.ndimage import binary_dilation, maximum_filter
@@ -44,20 +45,93 @@ class Field:
     svc: np.ndarray
 
 
-def field_or_none(shape):
-    """The instrument's lane field, or None while it has no samples yet
-    (callers that only use the lane to extrapolate known comets backward
-    do without)."""
-    return build_field(shape) if INSTRUMENT.lane_samples.exists() else None
+def field_or_none(shape, when=None):
+    """The instrument's lane field (the season's around `when`, see
+    build_field), or None while it has no samples yet (callers that only
+    use the lane to extrapolate known comets backward do without)."""
+    try:
+        return build_field(shape, when=when)
+    except FileNotFoundError:
+        return None
 
 
-def build_field(shape, samples=None):
-    """Flow field and search band from lane samples [(x, y, vx, vy, ...)]."""
-    if samples is None:
+_SAMPLES = []
+
+
+def lane_samples():
+    """The instrument's lane samples file, read once."""
+    if not _SAMPLES:
         f = INSTRUMENT.lane_samples
         if not f.exists():
             raise FileNotFoundError(f"no Kreutz lane for {INSTRUMENT.label} yet: {f.name} is missing")
-        samples = json.load(open(f))
+        _SAMPLES.append(json.load(open(f)))
+    return _SAMPLES[0]
+
+
+# A season's lane needs this many samples; where the reports are thin
+# (C2 in February: 7 within 15 days) the window doubles until it has them,
+# up to SEASON_WIDEN times INSTRUMENT.season_days.
+SEASON_MIN = 40
+SEASON_WIDEN = 4
+
+
+def season_samples(samples, when):
+    """The samples taken within INSTRUMENT.season_days of `when`'s day of
+    the year, in any year (more, see SEASON_MIN): all of them for an
+    instrument whose lane doesn't move with the seasons, or without a date."""
+    if not INSTRUMENT.season_days or when is None:
+        return samples
+    doy = when.timetuple().tm_yday
+    apart = []
+    for s in samples:
+        d = abs(datetime.fromisoformat(s[5]).timetuple().tm_yday - doy)
+        apart.append(min(d, 365 - d))
+    days = INSTRUMENT.season_days
+    while True:
+        near = [s for s, d in zip(samples, apart) if d <= days]
+        if len(near) >= SEASON_MIN or days >= SEASON_WIDEN * INSTRUMENT.season_days:
+            return near
+        days *= 2
+
+
+# The search sector of an instrument that takes it from the lane: the
+# samples' position angles about the Sun within SECTOR_CORE of their
+# median (some reports are of other things: in C3 in October a tenth of
+# them lie 30 deg or more off the rest, in C2 in January a comet came in
+# from the upper right), 2nd to 98th percentile, widened by SECTOR_MARGIN.
+SECTOR_CORE = 45.0
+SECTOR_MARGIN = 15.0
+
+
+def season_sector(when, sun_xy):
+    """(center, half-width) in degrees counterclockwise from straight right
+    of the Sun, for search._roi, from the season's lane samples around
+    `when`; None without samples (search the whole annulus)."""
+    try:
+        S = np.array([s[:2] for s in season_samples(lane_samples(), when)], dtype=float)
+    except FileNotFoundError:
+        return None
+    if len(S) == 0:
+        return None
+    ang = np.arctan2(-(S[:, 1] - sun_xy[1]), S[:, 0] - sun_xy[0])
+    center = np.degrees(np.arctan2(np.sin(ang).mean(), np.cos(ang).mean()))
+    center += np.median((np.degrees(ang) - center + 180) % 360 - 180)
+    dev = (np.degrees(ang) - center + 180) % 360 - 180
+    lo, hi = np.percentile(dev[np.abs(dev) <= SECTOR_CORE], [2, 98])
+    mid = center + (lo + hi) / 2
+    return float(mid), float((hi - lo) / 2 + SECTOR_MARGIN)
+
+
+def build_field(shape, samples=None, when=None):
+    """Flow field and search band from lane samples [(x, y, vx, vy, ...)]:
+    the instrument's, and for one whose lane moves with the seasons
+    (season_samples) those of the season around `when`."""
+    if samples is None:
+        samples = lane_samples()
+    samples = season_samples(samples, when)
+    if not samples:
+        raise FileNotFoundError(f"no {INSTRUMENT.label} lane samples within {INSTRUMENT.season_days} days "
+                                f"of {when:%b %d}")
     S = np.array([s[:4] for s in samples], dtype=float)
     H, W = shape
     # report (x, y, vx, vy) -> array (row, col, vrow, vcol)

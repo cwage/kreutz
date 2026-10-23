@@ -94,10 +94,10 @@ from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kr
                        report_points)
 from .lane import build_field, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
-from .frames import BG_FRAMES, BG_SKIP, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
+from .frames import BG_FRAMES, BG_SKIP, CADENCE, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
-from .shortlist import FRAME_ROWS, _known_by_position
+from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
 from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday
 
 FEED = INSTRUMENT.feed
@@ -124,22 +124,8 @@ def sync(since):
     (The feed directory keeps about three weeks of frames; only the recent
     hours matter here, and the archive fetcher is the way to get the rest.)
     Returns how many were new."""
-    from .sync import listing  # (sync imports this module)
-    names = sorted(listing())
-    new = 0
-    for n in names:
-        t = datetime.strptime(INSTRUMENT.name_re.search(n).group(1), "%Y%m%dT%H%M%S")
-        if t < since:
-            continue
-        dest = L1B / f"{t:%Y/%m/%d}" / n
-        if dest.exists():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".part")
-        tmp.write_bytes(_get(FEED + n))
-        tmp.rename(dest)
-        new += 1
-    return new
+    from .sync import listing, pull  # (sync imports this module)
+    return pull(sorted(listing(since)))
 
 
 def prune(keep_days, now, roots=None):
@@ -149,9 +135,9 @@ def prune(keep_days, now, roots=None):
     The date comes from the path, not file times (an archive-fetched frame
     is new on disk however old it is). Returns the directories removed."""
     if roots is None:
-        # Cache keys are 'bg16...' for CCOR-1 and 'ccor2-bg16...' for CCOR-2:
-        # each watcher prunes its own instrument's maps only.
-        mine = (lambda p: not p.name.startswith("ccor")) if not INSTRUMENT.tag \
+        # Cache keys are 'bg16...' for CCOR-1 and '<key>-bg16...' for the
+        # others ('ccor2-', 'c2-'): each watcher prunes its own maps only.
+        mine = (lambda p: p.name.startswith("bg")) if not INSTRUMENT.tag \
             else (lambda p: p.name.startswith(INSTRUMENT.key + "-"))
         roots = [L1B] + (sorted(p for p in SIG_CACHE.iterdir() if p.is_dir() and mine(p))
                          if SIG_CACHE.exists() else [])
@@ -204,14 +190,17 @@ def latest_reports():
         return None  # the site hiccups; treat as unknown and let a human check
 
 
-_FIELD = []
+_FIELD = {}
 
 
-def lane_field():
-    """The Kreutz lane's flow field, built once."""
-    if not _FIELD:
-        _FIELD.append(build_field((FRAME_ROWS, 2048)))  # lane.py: the instrument's samples
-    return _FIELD[0]
+def lane_field(when):
+    """The Kreutz lane's flow field, built once (once a day for an
+    instrument whose lane moves with the seasons, lane.season_samples)."""
+    key = when.date() if INSTRUMENT.season_days else None
+    if key not in _FIELD:
+        _FIELD.clear()
+        _FIELD[key] = build_field((FRAME_ROWS, FRAME_COLS), when=when)  # lane.py: the instrument's samples
+    return _FIELD[key]
 
 
 def reported_by(track, t, reps):
@@ -227,7 +216,7 @@ def reported_by(track, t, reps):
     track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
     fits = [r for r, pts, posted in report_points(reps, t.date())
             if matches(track, pts) or (len(pts) >= 2
-                                       and _known_by_position(track, [(r, pts)], lane_field()) is not None)]
+                                       and _known_by_position(track, [(r, pts)], lane_field(t)) is not None)]
     if not fits:
         return None
     r = min(fits, key=lambda r: r["posted_utc"])
@@ -482,7 +471,7 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for f in pending:
         dt = (seq.times[last] - f["t"]) / FRAME
-        if dt < 1:
+        if round(dt) < 1:
             keep.append(f)
             continue
         pts = measure(seq, last, f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt, f["vx"], f["vy"],
@@ -790,7 +779,7 @@ def main():
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
     page.write()  # the one status page over every instrument, data/index.html
-    history = timedelta(minutes=15) * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
+    history = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
     # done: windows searched; chains: open tracks, as in evaluate.tracks;
     # pending: alerted objects still being followed. Resumed from the last
     # save when it's recent enough to matter.
@@ -817,8 +806,8 @@ def main():
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         seq = Sequence(frame_paths(now - history - timedelta(hours=2), now))
         sun_xy = seq.rc_to_report(*seq.sun_rc())  # report coords, for pageworthy
-        if field is None:
-            field = lane_field() if seq.shape == (FRAME_ROWS, 2048) else build_field(seq.shape)
+        if field is None or INSTRUMENT.season_days:
+            field = lane_field(now) if seq.shape == (FRAME_ROWS, FRAME_COLS) else build_field(seq.shape, when=now)
         todo = [i for i, t in enumerate(seq.times)
                 if t not in done and i >= BG_FRAMES + BG_SKIP + args.n]
         for last in todo:
@@ -846,7 +835,7 @@ def main():
             for ch in chains:
                 prev = ch[-1]
                 steps = (t - datetime.fromisoformat(prev["time"])) / FRAME
-                if not 1 <= steps <= 1 + MAX_MISSING:
+                if not 1 <= round(steps) <= 1 + MAX_MISSING:
                     continue
                 px, py = prev["x"] + prev["vx"] * steps, prev["y"] + prev["vy"] * steps
                 for k, c in enumerate(cands):

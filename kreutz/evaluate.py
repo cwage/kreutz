@@ -30,7 +30,7 @@ from . import DATA
 from .instrument import CURRENT as INSTRUMENT
 from .search import MAX_MISSING
 
-FRAME = timedelta(minutes=15)
+FRAME = INSTRUMENT.cadence
 # Sun center in report coords, where the frames' helioprojective WCS puts
 # it (frames.sun_pixel: 40 px from the WCS reference pixel, and the same
 # in every frame); plenty for a radius cut on stored candidates, since the
@@ -60,8 +60,8 @@ def load(paths):
             continue
         if np.hypot(c["x"] - SUN_XY[0], c["y"] - SUN_XY[1]) < R_MIN:
             continue
-        if not consistent(c["per_frame"]) or not EDGE_PX <= c["x"] <= 2047 - EDGE_PX \
-                or not EDGE_PX <= c["y"] <= 1919 - EDGE_PX:
+        if not consistent(c["per_frame"]) or not EDGE_PX <= c["x"] <= INSTRUMENT.shape[1] - 1 - EDGE_PX \
+                or not EDGE_PX <= c["y"] <= INSTRUMENT.shape[0] - 1 - EDGE_PX:
             continue
         c["t"] = datetime.fromisoformat(c["time"])
         by_time[c["t"]].append(c)
@@ -124,10 +124,12 @@ def tracks(by_time, threshold, link):
         grown = []
         for ch in open_:
             last = ch[-1]
+            # whole steps for which window this is (LASCO's frames are a
+            # few seconds off the 12 minutes), the true ones to predict
             steps = (t - last["t"]) / FRAME
-            if steps < 1:
+            if round(steps) < 1:
                 continue  # an earlier skipped window; keep waiting
-            if steps > 1 + MAX_MISSING:
+            if round(steps) > 1 + MAX_MISSING:
                 done.append(ch)
                 continue
             # across a missing frame the prediction is two frames out
@@ -276,8 +278,8 @@ def evaluate(runs, threshold, link):
     # Match as the shortlist does: along the report's path, extrapolated
     # forward (straight) and, for Kreutz reports, backward along the lane.
     from .lane import field_or_none
-    from .shortlist import FRAME_ROWS, _known_by_position
-    field = field_or_none((FRAME_ROWS, 2048))
+    from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
+    field = field_or_none((FRAME_ROWS, FRAME_COLS), when=lo)
     fired = []
     for tr in trs:
         fire = tr[link - 1]  # the window where it qualified
