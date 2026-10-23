@@ -22,15 +22,17 @@ for n in $(docker ps --format '{{.Names}}'); do
   k=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$n" | sed -n 's/^KREUTZ_INSTRUMENT=//p')
   box[${k:-ccor1}]=$n
 done
-labels=$(python3 -c "import json; print(' '.join(f\"{i['key']}:{i['label']}:{i['live']}\" for i in json.load(open('data/instruments.json'))))")
-for e in $labels; do
+# one key:label:live per line; labels have spaces ("LASCO C2")
+mapfile -t labels < <(python3 -c 'import json
+for i in json.load(open("data/instruments.json")): print(i["key"] + ":" + i["label"] + ":" + i["live"])')
+for e in "${labels[@]}"; do
   IFS=: read -r key label dir <<< "$e"
   if [ -n "${box[$key]}" ]; then follow "$label" "${box[$key]}" &
   elif [ -d "data/$dir" ]; then echo "[$label] no watcher container running"; fi
 done
 i=0
 while true; do
-  for e in $labels; do
+  for e in "${labels[@]}"; do
     IFS=: read -r key label dir <<< "$e"
     [ -n "${box[$key]}" ] || continue
     age=$(python3 -c "import json,datetime as D;s=json.load(open('data/$dir/status.json'));print(int((D.datetime.utcnow()-D.datetime.fromisoformat(s['updated_utc'])).total_seconds()//60))" 2>/dev/null || echo unreadable)
