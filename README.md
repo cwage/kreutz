@@ -113,7 +113,7 @@ Modules, each with usage in its docstring:
 | `kreutz.audit` | the other way round: reports the watcher missed, vetoed, or alerted on and then dropped, and alerts that came to nothing |
 | `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
 | `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
-| `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html` |
+| `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html`, and `data/mark.html`, a frame player for circling things in a render (`mark.html?dir=render-ccor2/<name>/style-soft/field`) |
 | `kreutz.sync` | pull everything on the SWPC feed to disk (CCOR-2, which the watcher can't run on yet; `--loop` to keep up) |
 | `kreutz.lanesamples` | lane samples for `lane.py` from archive runs: the windows of tracks matching the instrument's Kreutz reports |
 
