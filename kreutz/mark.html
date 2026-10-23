@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kreutz mark</title>
+<style>
+  :root { --bg: #0d0f12; --card: #171a20; --line: #2a2f38; --fg: #d8dce3; --dim: #8a919c; --hot: #f2a93b; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .meta { color: var(--dim); margin-bottom: 8px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  button, input[type=text] { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+           padding: 4px 10px; font: inherit; }
+  button { cursor: pointer; }
+  input[type=range] { flex: 1; min-width: 160px; }
+  .stage { position: relative; display: inline-block; max-width: 100%; }
+  .stage canvas { display: block; max-width: 100%; height: auto; cursor: crosshair; image-rendering: pixelated; background: #000; }
+  textarea { width: 100%; box-sizing: border-box; height: 140px; background: #000; color: var(--fg);
+             border: 1px solid var(--line); border-radius: 6px; font: 12px/1.4 ui-monospace, monospace; }
+  .hint { color: var(--dim); font-size: 13px; }
+  ul { padding-left: 18px; margin: 6px 0; } li button { padding: 0 6px; margin-left: 6px; }
+</style>
+</head>
+<body>
+<h1>kreutz mark</h1>
+<div class="meta" id="meta">loading…</div>
+<div class="bar">
+  <input type="text" id="dir" size="60" placeholder="render-ccor2/&lt;name&gt;/style-soft/field">
+  <button onclick="load(document.getElementById('dir').value)">load</button>
+</div>
+<div class="bar">
+  <button id="play" onclick="toggle()">play</button>
+  <button onclick="step(-1)">◀</button>
+  <button onclick="step(1)">▶</button>
+  <input type="range" id="slider" min="0" max="0" value="0" oninput="show(+this.value)">
+  <span id="fno"></span>
+</div>
+<div class="stage"><canvas id="cv"></canvas></div>
+<p class="hint">Click to circle something in the current frame; click a circle again to remove it.
+Each mark records the frame and the pixel. Circles from other frames show dashed.
+Copy the JSON below and paste it back to Claude.</p>
+<ul id="list"></ul>
+<div class="bar"><button onclick="copy()">copy JSON</button><button onclick="clearAll()">clear all</button></div>
+<textarea id="out" readonly></textarea>
+
+<script>
+// Plays a render's numbered frames (field/000.png, ...) from the data
+// server's directory listing, and lets you circle things per frame.
+// Marks are kept in this browser (localStorage, per directory).
+const R = 10;  // circle radius in image px
+let dir = '', frames = [], imgs = [], cur = 0, timer = null, marks = [];
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+
+function key() { return 'marks:' + dir; }
+function save() { try { localStorage.setItem(key(), JSON.stringify(marks)); } catch (e) {} out(); }
+function out() {
+  document.getElementById('out').value = JSON.stringify({dir, frames: frames.length,
+    marks: marks.map(m => ({frame: m.frame, file: frames[m.frame], x: m.x, y: m.y}))}, null, 1);
+  document.getElementById('list').innerHTML = marks.map((m, i) =>
+    `<li>frame ${m.frame} (${frames[m.frame]}) at ${m.x},${m.y}<button onclick="drop(${i})">×</button></li>`).join('');
+}
+
+async function load(d) {
+  d = d.replace(/^\/+|\/+$/g, '');
+  if (!d) return;
+  dir = d; history.replaceState(null, '', '?dir=' + encodeURIComponent(d));
+  document.getElementById('dir').value = d;
+  const html = await (await fetch(d + '/', {cache: 'no-store'})).text();
+  frames = [...html.matchAll(/href="([^"]+\.png)"/g)].map(m => decodeURIComponent(m[1])).sort();
+  if (!frames.length) { document.getElementById('meta').textContent = `no .png frames under ${d}/`; return; }
+  imgs = await Promise.all(frames.map(f => new Promise(res => {
+    const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = `${d}/${f}`; })));
+  cv.width = imgs[0].naturalWidth; cv.height = imgs[0].naturalHeight;
+  document.getElementById('slider').max = frames.length - 1;
+  try { marks = JSON.parse(localStorage.getItem(key()) || '[]'); } catch (e) { marks = []; }
+  document.getElementById('meta').textContent = `${d}: ${frames.length} frames, ${cv.width}×${cv.height}`;
+  show(0); out();
+}
+
+function show(i) {
+  cur = Math.max(0, Math.min(frames.length - 1, i));
+  document.getElementById('slider').value = cur;
+  document.getElementById('fno').textContent = `${cur + 1} / ${frames.length}  ${frames[cur]}`;
+  if (imgs[cur]) ctx.drawImage(imgs[cur], 0, 0);
+  for (const m of marks) {
+    ctx.beginPath(); ctx.arc(m.x, m.y, R, 0, 2 * Math.PI);
+    ctx.setLineDash(m.frame === cur ? [] : [3, 3]);
+    ctx.strokeStyle = m.frame === cur ? '#f2a93b' : 'rgba(242,169,59,.5)'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+function step(d) { show((cur + d + frames.length) % frames.length); }
+function toggle() {
+  if (timer) { clearInterval(timer); timer = null; document.getElementById('play').textContent = 'play'; }
+  else { timer = setInterval(() => step(1), 150); document.getElementById('play').textContent = 'pause'; }
+}
+cv.addEventListener('click', e => {
+  const r = cv.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) * cv.width / r.width), y = Math.round((e.clientY - r.top) * cv.height / r.height);
+  const hit = marks.findIndex(m => m.frame === cur && Math.hypot(m.x - x, m.y - y) <= R);
+  if (hit >= 0) marks.splice(hit, 1); else marks.push({frame: cur, x, y});
+  save(); show(cur);
+});
+function drop(i) { marks.splice(i, 1); save(); show(cur); }
+function clearAll() { marks = []; save(); show(cur); }
+async function copy() {
+  const t = document.getElementById('out');
+  try { await navigator.clipboard.writeText(t.value); } catch (e) { t.select(); document.execCommand('copy'); }
+}
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowRight') step(1); else if (e.key === 'ArrowLeft') step(-1); else if (e.key === ' ') { e.preventDefault(); toggle(); }
+});
+const q = new URLSearchParams(location.search).get('dir');
+if (q) load(q); else document.getElementById('meta').textContent = 'give a frames directory under data/, e.g. render-ccor2/<name>/style-soft/field';
+</script>
+</body>
+</html>

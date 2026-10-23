@@ -43,6 +43,8 @@ def write(root=None):
     insts = instruments()
     _write(root / "instruments.json", json.dumps(insts, indent=1) + "\n")
     _write(root / "index.html", Path(__file__).with_name("status.html").read_text())
+    # a frame player for circling things in a render, http://localhost:8000/mark.html?dir=<frames dir>
+    _write(root / "mark.html", Path(__file__).with_name("mark.html").read_text())
     for i in insts:
         if (root / i["live"]).is_dir():
             _write(root / i["live"] / "status.html", REDIRECT)
