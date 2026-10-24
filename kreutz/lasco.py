@@ -30,7 +30,7 @@ from datetime import datetime
 
 import numpy as np
 from astropy.io import fits
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import binary_dilation, map_coordinates
 
 from .instrument import CURRENT as INSTRUMENT
 
@@ -42,6 +42,19 @@ STANDARD = {"C2": ("Orange", "Clear"), "C3": ("Clear", "Clear")}
 # 5%; C3's corona stays above 50% out to the field stop, C2's fades with
 # vignetting to 16% at 660 px from the Sun, so C2 loses its corners.
 DARK_FRAC = 0.1
+# Saturation bleed: a source bright enough to fill its pixels (Venus near
+# conjunction, 2026-10-23..) spills charge along the readout row, a line
+# hundreds of pixels long through the frame, and the end of it, creeping
+# as the planet moves, is a "mover" to the search (C3 2026-10-24 08:30,
+# followed for five hours). The headers don't flag it (DATASAT 0). A run
+# of BLEED_RUN or more pixels along a row at BLEED_FRAC of the frame's
+# maximum or more is bleed; it and BLEED_GROW pixels around it are
+# masked. Nothing else comes close: rows tangent to the bright occulter
+# ring run up to 102 px at that level (C2 and C3, Sep-Oct 2026), Venus's
+# bleed across C3 on 2026-10-23/24 218 to 752 px.
+BLEED_FRAC = 0.7
+BLEED_RUN = 150
+BLEED_GROW = 3
 
 _ROW = re.compile(r"^(\d+\.fts)\s+(\d{4}/\d\d/\d\d)\s+(\d\d:\d\d:\d\d)\s+(\S+)\s+\S+\s+(\d+)\s+(\d+)"
                   r"\s+\d+\s+\d+\s+(\S+)\s+(\S+)")
@@ -129,6 +142,20 @@ def star_drift(t, header):
     return float(px * np.sin(tilt)), float(px * np.cos(tilt))
 
 
+def bleed_mask(raw):
+    """Pixels of a raw frame in or next to a saturation bleed line (see
+    BLEED_*): runs along rows of BLEED_RUN or more near-maximum pixels."""
+    hot = raw >= BLEED_FRAC * np.nanmax(raw)
+    mask = np.zeros_like(hot)
+    for r in np.nonzero(hot.sum(axis=1) >= BLEED_RUN)[0]:
+        row = np.concatenate([[False], hot[r], [False]])
+        edges = np.flatnonzero(row[1:] != row[:-1])
+        for a, b in zip(edges[::2], edges[1::2]):
+            if b - a >= BLEED_RUN:
+                mask[r, a:b] = True
+    return binary_dilation(mask, iterations=BLEED_GROW) if mask.any() else mask
+
+
 def load(path):
     """(image, header) as described in the module docstring; the header's
     roll is set to 0 to match."""
@@ -139,6 +166,7 @@ def load(path):
             header = h[0].header.copy()
     img = (raw - header["OFFSET"]) / header["EXPTIME"]
     img[raw <= 0] = np.nan  # missing telemetry blocks
+    img[bleed_mask(raw)] = np.nan  # saturation bleed from a planet
     img = north_up(img, header)
     with np.errstate(invalid="ignore"):
         img[img < DARK_FRAC * np.nanmedian(img)] = np.nan

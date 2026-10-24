@@ -141,6 +141,9 @@ def _cache_key():
         key += f"-cr{CR_Z}s{CR_SHARP}g{CR_GROW}"
     if INSTRUMENT.dark_spots:
         key += f"-dk{DARK_Z}b{DARK_BOX}g{DARK_GROW}-bl{BLOTCH_BOX}g{BLOTCH_GROW}"
+    if INSTRUMENT.source == "lasco":
+        from .lasco import BLEED_FRAC, BLEED_GROW, BLEED_RUN
+        key += f"-sat{BLEED_FRAC}r{BLEED_RUN}g{BLEED_GROW}"
     return INSTRUMENT.tag.lstrip("-") + ("-" if INSTRUMENT.tag else "") + key.replace(".", "p")
 
 
