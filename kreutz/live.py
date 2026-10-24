@@ -62,6 +62,16 @@ Kreutz tracks, which the stream outgrows: the comet of 2026-10-21 11:00,
 Ruan's, ran 273 px from the nearest track, and its first page was held
 back for 15 minutes.) "lane_px", that distance, is still written for
 the record.
+--orbit-threshold T adds the orbit-constrained search (orbitsearch.py) to
+every window, at threshold T: candidates along Kreutz orbits, which it
+finds fainter and earlier than the full search and with fewer false
+tracks (CCOR-1, 2026-10-01..24 replayed through these rules at 6.0: 19 of
+23 reported comets, 0.2 unexplained pages a day; CCOR-2: 10 of 17, 0.4 a
+day, against 1.2 for the full search). Its candidates join the full
+search's, less any within orbitsearch.SEP_PX of one, and are linked,
+vetted and followed with them. A track made only of orbit candidates is
+"found_by": "orbit" in its files, and isn't paged until it's confirmed
+unless --orbit-pages is given: a review tier while it proves itself live.
 --render makes a confirmed object's cutouts and pictures (render.py,
 style.py) in the background under data/render/<alert name>/, and again
 every RENDER_EVERY frames while the object is still in view, so the
@@ -98,6 +108,7 @@ from .frames import BG_FRAMES, BG_SKIP, CADENCE, L1B, SIG_CACHE, STAR_FRAMES, Se
 from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
+from .orbitsearch import SEP_PX as ORBIT_SEP_PX, orbit_search
 from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday
 
 FEED = INSTRUMENT.feed
@@ -318,6 +329,19 @@ def sunward(c, sun_xy):
     return float(abs((heading - to_sun + 180) % 360 - 180)), float(np.hypot(c["vx"], c["vy"]))
 
 
+def cfar(cands, threshold, t, what=""):
+    """Constant false-alarm rate (evaluate.window_thresholds): a window
+    with many candidates above threshold is a disturbed one, and only its
+    CFAR_K best and anything as good stand."""
+    top = sorted((c["score"] for c in cands), reverse=True)
+    thr = max(threshold, top[CFAR_K - 1]) if len(top) >= CFAR_K else threshold
+    if thr > threshold:
+        print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} {what}candidates, threshold raised to {thr:.1f}",
+              file=sys.stderr)
+        cands = [c for c in cands if c["score"] >= thr]
+    return cands
+
+
 def pageworthy(c, sun_xy):
     """Does a candidate move like a sungrazer: at the Sun, within
     PAGE_HEADING, at the instrument's page_speed or more?"""
@@ -528,7 +552,8 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
                        "frames": len(f["points"]), "other_instruments": f["others"],
                        "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds"),
-                       "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged")},
+                       "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
+                       "found_by": f.get("found_by")},
                       open(path, "w"), indent=1)
             log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
                 known=f.get("known"))
@@ -711,6 +736,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
             "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
+            "found_by": f.get("found_by"),
             "near_lane": f.get("near_lane"),  # files from before the heading gate
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
@@ -766,6 +792,10 @@ def main():
     ap.add_argument("--link", type=int, default=3)
     ap.add_argument("--n", type=int, default=4)
     ap.add_argument("--notify", help="command run with the alert .json path as argument")
+    ap.add_argument("--orbit-threshold", type=float, metavar="T",
+                    help="also run the orbit-constrained search (orbitsearch.py) at threshold T")
+    ap.add_argument("--orbit-pages", action="store_true",
+                    help="page tracks found only by the orbit search at the candidate stage too")
     ap.add_argument("--render", action="store_true",
                     help="on confirmation, run kreutz.render and kreutz.style for it in the background")
     ap.add_argument("--keep-days", type=int, metavar="N",
@@ -820,16 +850,19 @@ def main():
                 done.add(t)
                 checkpoint(t)
                 continue
+            cands = cfar(cands, args.threshold, t)
+            if args.orbit_threshold is not None:
+                try:
+                    extra = [dict(asdict(c), found_by="orbit")
+                             for c in orbit_search(seq, last, args.n, args.orbit_threshold)
+                             if consistent(c.per_frame) and np.hypot(c.vx, c.vy) >= LIVE_SPEED_MIN]
+                except ValueError:
+                    extra = []
+                extra = cfar(extra, args.orbit_threshold, t, "orbit ")
+                cands += [c for c in extra
+                          if all(np.hypot(c["x"] - o["x"], c["y"] - o["y"]) > ORBIT_SEP_PX for o in cands)]
             for c in cands:
                 c["time"] = t.isoformat()
-            # Constant false-alarm rate (evaluate.window_thresholds): a window
-            # with many candidates above threshold is a disturbed one.
-            top = sorted((c["score"] for c in cands), reverse=True)
-            thr = max(args.threshold, top[CFAR_K - 1]) if len(top) >= CFAR_K else args.threshold
-            if thr > args.threshold:
-                print(f"{t:%Y-%m-%d %H:%M}: {len(cands)} candidates, threshold raised to {thr:.1f}",
-                      file=sys.stderr)
-                cands = [c for c in cands if c["score"] >= thr]
             # link onto open chains
             grown, used = [], set()
             for ch in chains:
@@ -921,10 +954,15 @@ def main():
                     px = round(lane_px(field, c["x"], c["y"], seq.shape[0]))
                     off, speed = sunward(c, sun_xy)
                     paged = pageworthy(c, sun_xy)
+                    found_by = "orbit" if all(k.get("found_by") == "orbit" for k in ch) else None
+                    held = found_by and paged and not args.orbit_pages
+                    if held:
+                        paged = False
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
-                         "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged},
+                         "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged,
+                         "found_by": found_by},
                         indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
@@ -938,7 +976,8 @@ def main():
                               f"already reported ({who(known_rep)}, by {known_rep['how']})", file=sys.stderr)
                     else:
                         remember(c, f"alert: {stem.name}")
-                        quiet = None if paged else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
+                        quiet = None if paged else "found by the orbit search only, not paged" if held \
+                            else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                         log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
                             reports_checked=reps is not None, others=others, lane_px=px,
                             heading_deg=round(off), paged=paged, note=quiet)
@@ -951,7 +990,7 @@ def main():
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
                                     "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px,
-                                    "heading_deg": round(off), "paged": paged,
+                                    "heading_deg": round(off), "paged": paged, "found_by": found_by,
                                     "decided_utc": now_utc.isoformat(timespec="seconds")})
                     if args.notify:
                         try:

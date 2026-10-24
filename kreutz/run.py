@@ -24,6 +24,7 @@ from .frames import BG_FRAMES, BG_SKIP, CADENCE, INSTRUMENT, STAR_FRAMES, Sequen
 from .search import search
 
 LOOSE = 4.5
+ORBIT_LOOSE = 3.5  # orbitsearch: its noise peaks reach ~4.6 per window
 LANE_LOOSE = 4.0
 
 
@@ -34,13 +35,15 @@ def main():
     ap.add_argument("--n", type=int, default=4, help="frames per window")
     ap.add_argument("--lane", action="store_true",
                     help="lane-constrained search (lane.py) instead of the full search")
+    ap.add_argument("--orbit", action="store_true",
+                    help="orbit-constrained search (orbitsearch.py) instead of the full search")
     args = ap.parse_args()
     end = args.end or args.start + timedelta(days=1)
     warm = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n)
     seq = Sequence(frame_paths(args.start - warm, end))
     first = next(i for i, t in enumerate(seq.times) if t >= args.start)
     first = max(first, BG_FRAMES + BG_SKIP + args.n)
-    kind = f"lane{args.n}" if args.lane else f"n{args.n}"
+    kind = f"lane{args.n}" if args.lane else f"orbit{args.n}" if args.orbit else f"n{args.n}"
     out = DATA / f"runs{INSTRUMENT.tag}" / kind / f"{args.start:%Y%m%dT%H%M}_{end:%Y%m%dT%H%M}.jsonl"
     field = None
     if args.lane:
@@ -57,6 +60,9 @@ def main():
                 if args.lane:
                     from .lane import lane_search
                     cands = lane_search(seq, last, args.n, LANE_LOOSE, field)
+                elif args.orbit:
+                    from .orbitsearch import orbit_search
+                    cands = orbit_search(seq, last, args.n, ORBIT_LOOSE)
                 else:
                     cands = search(seq, last, args.n, LOOSE)
             except ValueError as e:  # a gap in the data, too few stars, ...
