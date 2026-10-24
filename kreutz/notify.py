@@ -17,7 +17,9 @@ stage. Nor does a candidate that doesn't move like a sungrazer (the
 file's "paged" false: pointed more than live.PAGE_HEADING off the Sun, or
 slower than the instrument's page_speed; older files say "near_lane");
 the watcher keeps following it, and it pages if it's confirmed, with
-the distance in the message.
+the distance in the message. A track only the orbit search found
+("found_by": "orbit", live.py --orbit-threshold) is held back the same way
+unless the watcher runs with --orbit-pages.
 """
 
 import json
@@ -61,7 +63,9 @@ def compose(d, name):
     if far and not confirmed:
         return None
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
-    if far:
+    if far and d.get("found_by") == "orbit":
+        hint += "; found by the orbit search only"
+    elif far:
         hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d
                  else f"; {d['lane_px']} px off the Kreutz lane")
     if confirmed:

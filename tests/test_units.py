@@ -885,3 +885,57 @@ def test_lasco_bleed_mask_takes_a_saturation_line_but_not_a_bright_ring():
         else: os.environ["KREUTZ_INSTRUMENT"] = old
         import kreutz.instrument, kreutz.lasco
         importlib.reload(kreutz.instrument); importlib.reload(kreutz.lasco)
+
+
+def test_notify_holds_an_orbit_only_candidate_until_confirmed():
+    from kreutz import notify
+    track = [{"time": "2026-10-24T11:30:14", "x": 1631.0, "y": 1600.0, "vx": -5.0, "vy": -4.5}]
+    d = {"track": track, "other_instruments": [], "paged": False, "heading_deg": 3, "found_by": "orbit"}
+    assert notify.compose(d, "a.json") is None
+    title, lines, prio, _ = notify.compose(dict(d, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")
+    assert prio == "urgent" and "found by the orbit search only" in lines[0] and "off sunward" not in lines[0]
+
+
+def test_orbit_fit_recovers_a_kreutz_track():
+    from kreutz import orbit
+    e = orbit.Elements(T=datetime(2026, 10, 23, 18, 0), node=12.0, peri=89.0, i=143.9)
+    times = [datetime(2026, 10, 23, 8, 0) + timedelta(minutes=15 * k) for k in range(12)]
+    tx, ty = orbit.helioprojective(e, times, "earth")
+    assert np.all(np.hypot(tx, ty) < 20) and np.all(np.diff(np.hypot(tx, ty)) < 0)  # in view, falling sunward
+    start = orbit.Elements(T=datetime(2026, 10, 23, 16, 0), node=9.0, peri=86.6, i=143.9)
+    fitted, rms = orbit.fit(times, tx, ty, start, "earth")
+    assert rms < 1 and abs((fitted.T - e.T).total_seconds()) < 120 and abs(fitted.node - 12.0) < 0.2
+
+
+def test_orbit_search_finds_a_comet_along_its_orbit(monkeypatch):
+    import types
+    from kreutz import orbit, orbitsearch
+    from astropy.wcs import WCS
+    # a CCOR-1-like plate: 2048 px wide, ~0.0103 deg/px, Sun at the center
+    w = WCS(naxis=2)
+    w.wcs.ctype = ["HPLN-TAN", "HPLT-TAN"]
+    w.wcs.cunit = ["deg", "deg"]
+    w.wcs.cdelt = [0.0103, 0.0103]
+    w.wcs.crpix = [1024.5, 960.5]
+    w.wcs.crval = [0.0, 0.0]
+    H, W = 1920, 2048
+    t_last = datetime(2026, 10, 23, 10, 0)
+    times = [t_last - timedelta(minutes=15 * k) for k in range(7, -1, -1)]
+    e = orbit.Elements(T=t_last + timedelta(hours=8), node=10.0, peri=orbitsearch.PERI_A + orbitsearch.PERI_B * 10.0,
+                       i=orbitsearch.INCLINATION)
+    tx, ty = orbit.helioprojective(e, times, "earth")
+    col, row = w.wcs_world2pix(tx, ty, 0)
+    rng = np.random.default_rng(5)
+    maps = []
+    for c, r in zip(col, row):
+        m = rng.normal(0, 1, (H, W)).astype(np.float32)
+        m[int(round(r)), int(round(c))] += 3.0  # 3 sigma a frame: 8.5 stacked
+        maps.append(m)
+    paths = [f"f{k}" for k in range(8)]
+    monkeypatch.setattr(orbitsearch, "_wcs", lambda p: (w, H, W))
+    monkeypatch.setattr(orbitsearch, "INSTRUMENT", types.SimpleNamespace(key="ccor1"))
+    seq = types.SimpleNamespace(times=times, paths=paths, shape=(H, W), significance=lambda i: maps[i],
+                                rc_to_report=lambda r, c: (c, H - 1 - r))
+    cands = orbitsearch.orbit_search(seq, 7, 8, 6.0)
+    best = cands[0]
+    assert best.score > 7 and np.hypot(best.x - col[-1], best.y - (H - 1 - row[-1])) < 3, best
