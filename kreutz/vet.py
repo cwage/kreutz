@@ -184,6 +184,15 @@ def ghost_verdict(now, prev):
 SHAPE_R = 25       # px around the peak looked at
 LINE_LEN = 15.0    # px: a component through the peak, above half of it, longer than this is a line
 LINE_RATIO = 4.0   # or more elongated than this
+# and it has to look like that in more than one frame: a comet's peak at 3 or
+# 4 sigma sometimes merges with a noise bump into a short bar. The faint
+# CCOR-2 comet of 2026-10-24 (Cerati/Ruan) was a point in 11 of 12 frames
+# and a 9 px, 4.1:1 bar in the 12:00 one, its brightest when it alerted;
+# judged on that frame alone it was vetoed. The five CCOR-1 artifacts
+# vetoed 2026-10-21..24 were lines in 2 or 3 of their frames above 3 sigma,
+# the two CCOR-2 stripes in 5 or more.
+LINE_FRAME_SIGMA = 3.0  # frames along the track with a peak this bright are looked at
+LINE_FRAMES = 2         # this many of them a line, it's a line
 
 # The track's own stack (line_stack): the last STACK_N significance maps
 # shifted along the track and summed, as the search sums them. A point
@@ -261,20 +270,27 @@ def line_stack(seq: Sequence, last: int, x, y, vx, vy):
 
 
 def line_like(seq: Sequence, last: int, x, y, vx, vy):
-    """Why the track's brightest frame shows a line rather than a point,
-    or None."""
+    """Why the track shows a line rather than a point, or None: in
+    LINE_FRAMES or more of its frames with a peak of LINE_FRAME_SIGMA, as
+    long as its brightest reaches PEAK_SIGMA."""
     prof = profile(seq, last, x, y, vx, vy)
-    if not prof:
+    if not prof or max(p[0] for p in prof.values()) < PEAK_SIGMA:
         return None
-    k, (peak, px, py) = max(prof.items(), key=lambda kv: kv[1][0])
-    if peak < PEAK_SIGMA:
-        return None
-    i = next(i for i in range(last, -1, -1) if round((seq.times[last] - seq.times[i]) / CADENCE) == k)
     H, W = seq.shape
-    r0, c0 = int(round(H - 1 - py)), int(round(px))
-    rs, cs = slice(max(r0 - SHAPE_R, 0), r0 + SHAPE_R + 1), slice(max(c0 - SHAPE_R, 0), c0 + SHAPE_R + 1)
-    length, ratio = extent(seq.significance(i)[rs, cs], r0 - rs.start, c0 - cs.start)
-    if length > LINE_LEN or ratio > LINE_RATIO:
-        return (f"a line, not a point: {length:.0f} px long, {ratio:.1f}:1, "
-                f"in the {seq.times[i]:%H:%M} frame")
-    return None
+    lines, looked = [], 0
+    for i in range(last, -1, -1):
+        k = round((seq.times[last] - seq.times[i]) / CADENCE)
+        if k not in prof or prof[k][0] < LINE_FRAME_SIGMA:
+            continue
+        looked += 1
+        _, px, py = prof[k]
+        r0, c0 = int(round(H - 1 - py)), int(round(px))
+        rs, cs = slice(max(r0 - SHAPE_R, 0), r0 + SHAPE_R + 1), slice(max(c0 - SHAPE_R, 0), c0 + SHAPE_R + 1)
+        length, ratio = extent(seq.significance(i)[rs, cs], r0 - rs.start, c0 - cs.start)
+        if length > LINE_LEN or ratio > LINE_RATIO:
+            lines.append((prof[k][0], length, ratio, seq.times[i]))
+    if len(lines) < LINE_FRAMES:
+        return None
+    _, length, ratio, t = max(lines, key=lambda a: a[0])
+    return (f"a line, not a point: {length:.0f} px long, {ratio:.1f}:1, in the {t:%H:%M} frame "
+            f"(a line in {len(lines)} of {looked} frames)")
