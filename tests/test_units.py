@@ -859,3 +859,29 @@ def test_line_stack_vetoes_a_stripe_but_not_a_moving_point():
     peak, ratio, length, area = vet.stack_shape(_stack_seq(stripe), 7, x8, y8, vx, vy)
     assert ratio >= 4 and length >= 20, (peak, ratio, length, area)
     assert vet.line_stack(_stack_seq(stripe), 7, x8, y8, vx, vy).startswith("a line in its own stack")
+
+
+def test_lasco_bleed_mask_takes_a_saturation_line_but_not_a_bright_ring():
+    import importlib, os
+    old = os.environ.get("KREUTZ_INSTRUMENT")
+    os.environ["KREUTZ_INSTRUMENT"] = "c3"
+    try:
+        import kreutz.instrument, kreutz.lasco
+        importlib.reload(kreutz.instrument); lasco = importlib.reload(kreutz.lasco)
+        rng = np.random.default_rng(4)
+        raw = (1000 + rng.normal(0, 20, (400, 400))).astype(np.float32)
+        yy, xx = np.mgrid[0:400, 0:400]
+        rr = np.hypot(yy - 200, xx - 200)
+        raw[np.abs(rr - 60) < 3] = 13000          # a bright ring: short runs along rows
+        raw[300, 20:380] = 13500                  # a bleed line, 360 px
+        raw[100, 300] = 14000                     # a cosmic ray
+        m = lasco.bleed_mask(raw)
+        assert m[300, 200] and m[302, 30] and not m[296, 200]
+        assert not m[140, 200] and not m[200, 140] and not m[100, 300]
+        quiet = raw.copy(); quiet[300] = 1000
+        assert not lasco.bleed_mask(quiet).any()
+    finally:
+        if old is None: os.environ.pop("KREUTZ_INSTRUMENT", None)
+        else: os.environ["KREUTZ_INSTRUMENT"] = old
+        import kreutz.instrument, kreutz.lasco
+        importlib.reload(kreutz.instrument); importlib.reload(kreutz.lasco)
