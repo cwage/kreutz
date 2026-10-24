@@ -861,6 +861,30 @@ def test_line_stack_vetoes_a_stripe_but_not_a_moving_point():
     assert vet.line_stack(_stack_seq(stripe), 7, x8, y8, vx, vy).startswith("a line in its own stack")
 
 
+def test_line_like_needs_more_than_one_frame_to_call_a_line():
+    from kreutz import vet
+    H, W = 120, 120
+    yy, xx = np.mgrid[0:H, 0:W]
+    vx, vy = -5.0, -4.5
+    x8, y8 = 60.0, 60.0
+
+    def frames(bars):
+        maps = []
+        for i in range(8):
+            k = 7 - i
+            r, c = H - 1 - (y8 - vy * k), x8 - vx * k
+            m = 5.0 * np.exp(-((yy - r) ** 2 + (xx - c) ** 2) / (2 * 1.2 ** 2))
+            if i in bars:  # the peak merged into a short bar, as the 2026-10-24 12:00 frame
+                m = 5.0 * np.exp(-((yy - r) ** 2) / (2 * 1.0 ** 2) - (xx - c) ** 2 / (2 * 6.0 ** 2))
+            maps.append(m.astype(np.float32))
+        return _stack_seq(maps)
+
+    assert vet.line_like(frames(()), 7, x8, y8, vx, vy) is None
+    assert vet.line_like(frames((7,)), 7, x8, y8, vx, vy) is None  # one bar in eight: a comet
+    why = vet.line_like(frames((5, 7)), 7, x8, y8, vx, vy)
+    assert why.startswith("a line, not a point") and "in 2 of 8 frames" in why
+
+
 def test_lasco_bleed_mask_takes_a_saturation_line_but_not_a_bright_ring():
     import importlib, os
     old = os.environ.get("KREUTZ_INSTRUMENT")
