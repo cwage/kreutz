@@ -108,7 +108,7 @@ from .frames import BG_FRAMES, BG_SKIP, CADENCE, L1B, SIG_CACHE, STAR_FRAMES, Se
 from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
-from .orbitsearch import SEP_PX as ORBIT_SEP_PX, orbit_search
+from .orbitsearch import SAME_RMS, SEP_PX as ORBIT_SEP_PX, joint_rms, orbit_of, orbit_search
 from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday
 
 FEED = INSTRUMENT.feed
@@ -225,25 +225,62 @@ def reported_by(track, t, reps):
     track in the evening. Of several that fit (a comet gets additional
     observations), the earliest posted: that's who found it."""
     track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
-    fits = [r for r, pts, posted in report_points(reps, t.date())
-            if matches(track, pts) or (len(pts) >= 2
-                                       and _known_by_position(track, [(r, pts)], lane_field(t)) is not None)]
+    candidates = report_points(reps, t.date())
+    fits = by_orbit(track, candidates) if ORBIT_MATCH else None
+    if fits is None:  # no orbit to test with: every report by position
+        fits, rest = [], candidates
+    else:  # the orbit decides for reports with a path; one-point reports by position
+        fits, rest = [(r, "orbit") for r in fits], [c for c in candidates if len(c[1]) < 2]
+    fits += [(r, "position") for r, pts, posted in rest
+             if matches(track, pts) or (len(pts) >= 2
+                                        and _known_by_position(track, [(r, pts)], lane_field(t)) is not None)]
     if not fits:
         return None
-    r = min(fits, key=lambda r: r["posted_utc"])
-    return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} | {"how": "position"}
+    r, how = min(fits, key=lambda f: f[0]["posted_utc"])
+    return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} | {"how": how}
+
+
+# A straight line from a report's points is a loose test. It can't reach
+# a comet followed for a day, which speeds up as it nears the Sun with the
+# report 15 h behind it (the Cerati/Ruan comet of 2026-10-24, alerted again
+# at 01:30 the next morning as unreported); and extrapolated 12 h it
+# claims the wrong comet on the same path (a CCOR-2 track of 2026-10-25
+# 08:45 matched to Ruan's report of the evening before, 1100" off any one
+# orbit with it, when it was Cerati's comet of that morning, 19"). Where
+# frames carry a helioprojective WCS, one Kreutz orbit through a report's
+# points and our track decides, however far apart in time.
+ORBIT_MATCH = INSTRUMENT.key in ("ccor1", "ccor2")
+
+
+def by_orbit(track, candidates):
+    """The reports (with 2+ points) one family orbit fits together with
+    the track, to SAME_RMS; None when the track itself has no such orbit
+    (too few points on frames on disk, or not a Kreutz path) to test with."""
+    own = [(c["t"], c["x"], c["y"]) for c in track]
+    try:
+        best = orbit_of(own)
+        if best is None or best[1] > SAME_RMS:
+            return None
+        return [r for r, pts, posted in candidates if len(pts) >= 2 and joint_rms(best[0], own, pts) < SAME_RMS]
+    except Exception as e:  # a missing frame or a failed fit must not stop the watcher
+        print(f"orbit match: {e}", file=sys.stderr)
+        return None
 
 
 def recheck(pending, t, reps):
-    """Follow-ups not yet matched to one of our instrument's reports by position, matched
+    """Follow-ups not yet settled on one of our instrument's reports, matched
     now against the latest reports: a report of the comet we're following
-    usually arrives hours after our alert."""
+    usually arrives hours after our alert. Settled is a match by orbit
+    where there are orbits (a match by position there is only provisional:
+    it can be the wrong comet on the same path), else by position."""
+    settled = ("orbit",) if ORBIT_MATCH else ("position", "orbit")
     for f in pending:
-        if reps and (f.get("known") or {}).get("how") != "position":
-            k = reported_by(seen(f), t, reps)
-            if k:
+        old = f.get("known") or {}
+        if reps and old.get("how") not in settled:
+            k = reported_by(passage(f), t, reps)
+            if k and (k["id"], k["how"]) != (old.get("id"), old.get("how")):
                 f["known"] = k
-                print(f"{t:%H:%M} {Path(f['alert']).stem} is {who(k)}, by position", file=sys.stderr)
+                print(f"{t:%H:%M} {Path(f['alert']).stem} is {who(k)}, by {k['how']}", file=sys.stderr)
 
 
 PASSAGE = timedelta(hours=INSTRUMENT.passage)  # a Kreutz comet stays in the field about this long after it's found
@@ -269,13 +306,13 @@ def matched_report(track, reps, held=False):
 
 
 def best_report(known, track, reps, held=False):
-    """What an object is known as now: a match by position (certain), from
+    """What an object is known as now: a match by position or orbit (certain), from
     when it was decided or against today's reports, else the guess by
     time it was filed under, else a fresh guess by time."""
-    if known and known.get("how") == "position":
+    if known and known.get("how") in ("position", "orbit"):
         return known
     found = matched_report(track, reps, held=held) if reps else None
-    if found and found["how"] == "position":
+    if found and found["how"] in ("position", "orbit"):
         return found
     return known or found
 
@@ -347,6 +384,13 @@ def pageworthy(c, sun_xy):
     PAGE_HEADING, at the instrument's page_speed or more?"""
     off, speed = sunward(c, sun_xy)
     return off <= PAGE_HEADING and speed >= INSTRUMENT.page_speed
+
+
+def passage(f):
+    """A follow-up's track with every measured point after it: the whole
+    path, for matching it to a report by orbit."""
+    return f["track"] + [{"time": t.isoformat(), "x": x, "y": y, "vx": f["vx"], "vy": f["vy"]}
+                         for t, x, y, _ in f["points"]]
 
 
 def seen(f):

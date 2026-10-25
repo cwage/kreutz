@@ -43,6 +43,10 @@ T_STEP = timedelta(minutes=1)
 TAU_MAX = timedelta(days=3.0)
 TAU_MIN = timedelta(hours=2)
 SEP_PX = 12  # candidates closer than this at the last frame are one
+# One orbit through a report's points and our track: the same comet fits
+# within ~10-170" (Collins' canvas-offset points the worst), two comets of
+# the same few days not within ~1900" (2026-10-23..25, CCOR-1 and CCOR-2).
+SAME_RMS = 400.0
 
 
 def family():
@@ -142,3 +146,52 @@ def orbit_search(seq: Sequence, last: int, n: int, threshold: float):
         if all(np.hypot(c.x - o.x, c.y - o.y) > SEP_PX for o in out):
             out.append(c)
     return out
+
+
+def _where():
+    return "l1" if INSTRUMENT.key == "ccor2" else "earth"
+
+
+def sky_points(pts):
+    """[(time, x, y)] in report coordinates to (times, Tx, Ty) in deg, each
+    through the WCS of the frame within half a cadence of it; points with
+    no such frame on disk are dropped."""
+    from .frames import CADENCE, frame_paths
+    ts, tx, ty = [], [], []
+    for t, x, y in pts:
+        paths = frame_paths(t - CADENCE / 2, t + CADENCE / 2)
+        if not paths:
+            continue
+        w, H, _ = _wcs(paths[0])
+        lon, lat = w.wcs_pix2world([[x, H - 1 - y]], 0)[0]
+        ts.append(t)
+        tx.append(lon)
+        ty.append(lat)
+    return ts, tx, ty
+
+
+def orbit_of(pts):
+    """The family orbit (node on NODES, perihelion argument on the node
+    relation, perihelion time free) that best fits [(time, x, y)], and its
+    rms in arcsec; None with fewer than 3 points on frames on disk."""
+    ts, tx, ty = sky_points(pts)
+    if len(ts) < 3:
+        return None
+    best = None
+    for node in NODES:
+        for ahead in (6, 24):
+            e0 = orbit.Elements(T=ts[-1] + timedelta(hours=ahead), node=float(node),
+                                peri=float(PERI_A + PERI_B * node), i=INCLINATION)
+            e, rms = orbit.fit(ts, tx, ty, e0, _where(), free=("T",))
+            if best is None or rms < best[1]:
+                best = (e, rms)
+    return best
+
+
+def joint_rms(e, pts, others):
+    """The rms (arcsec) of one orbit, started from e with its perihelion
+    time free, through both point lists: under SAME_RMS, one comet."""
+    ts, tx, ty = (a + b for a, b in zip(sky_points(pts), sky_points(others)))
+    if len(ts) < 3:
+        return float("inf")
+    return orbit.fit(ts, tx, ty, e, _where(), free=("T",))[1]

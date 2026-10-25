@@ -83,11 +83,13 @@ const link = (k, text) => k && k.url ? `<a href="${esc(k.url)}" target="_blank" 
 // The Sungrazer report that fits the object, as of the last snapshot: by
 // position, a report from this instrument; or by time (and lane), a
 // report from another coronagraph that is only likely the same object.
-// Only a match by position means the object is reported here: one by time
+// Only a match by position (or by one orbit through the report's points
+// and our track, for a comet followed long after it was reported) means
+// the object is reported here: one by time
 // leaves it unreported in this instrument, with the other report as a hint
 // (2026-10-23: a bright CCOR-1 comet read as "likely Chuck Fields's" off
 // a C3 report, and looked taken when nobody had reported it in CCOR-1).
-const reportedHere = k => !!k && k.how === 'position';
+const reportedHere = k => !!k && (k.how === 'position' || k.how === 'orbit');
 const reportBadge = (k, inst) => {
   if (!k) return `<span class="badge candidate">UNREPORTED</span>`;
   const when = k.posted_utc ? ` ${hhmm(k.posted_utc)}` : '';

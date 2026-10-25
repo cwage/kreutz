@@ -2,6 +2,7 @@
 July 2025 benchmark (scripts/benchmark.sh), run by hand when the detector
 changes."""
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import json
@@ -14,6 +15,14 @@ from kreutz.frames import flatten, sun_pixel
 from kreutz.frames import Sequence
 
 F = timedelta(minutes=15)
+
+
+@pytest.fixture(autouse=True)
+def no_orbit_match(monkeypatch):
+    """Report matching by position only: the tracks here are made up, and
+    with real frames on disk the orbit matcher would test them against
+    those frames' WCS."""
+    monkeypatch.setattr(live, "ORBIT_MATCH", False)
 
 
 class FakeSeq:
@@ -971,3 +980,25 @@ def test_orbit_search_finds_a_comet_along_its_orbit(monkeypatch):
     cands = orbitsearch.orbit_search(seq, 7, 8, 6.0)
     best = cands[0]
     assert best.score > 7 and np.hypot(best.x - col[-1], best.y - (H - 1 - row[-1])) < 3, best
+
+
+def test_orbit_match_ties_a_report_to_a_track_a_day_later(monkeypatch):
+    from kreutz import orbit, orbitsearch
+    # positions in degrees stand in for report coordinates: no WCS needed
+    monkeypatch.setattr(orbitsearch, "sky_points",
+                        lambda pts: ([p[0] for p in pts], [p[1] for p in pts], [p[2] for p in pts]))
+    monkeypatch.setattr(orbitsearch, "_where", lambda: "l1")
+    e = orbit.Elements(T=datetime(2026, 10, 25, 16, 0), node=12.0,
+                       peri=orbitsearch.PERI_A + orbitsearch.PERI_B * 12.0, i=orbitsearch.INCLINATION)
+
+    def path(e, start, n):
+        times = [start + timedelta(minutes=15 * k) for k in range(n)]
+        tx, ty = orbit.helioprojective(e, times, "l1")
+        return list(zip(times, tx, ty))
+    report = path(e, datetime(2026, 10, 24, 7, 45), 6)  # reported in the morning
+    track = path(e, datetime(2026, 10, 25, 0, 15), 12)  # followed from after midnight
+    other = path(replace(e, T=e.T + timedelta(hours=6)), datetime(2026, 10, 24, 20, 15), 5)  # the next comet along
+    best, rms = orbitsearch.orbit_of(track)
+    assert rms < 60
+    assert orbitsearch.joint_rms(best, track, report) < orbitsearch.SAME_RMS
+    assert orbitsearch.joint_rms(best, track, other) > orbitsearch.SAME_RMS
