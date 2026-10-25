@@ -920,6 +920,14 @@ def test_notify_holds_an_orbit_only_candidate_until_confirmed():
     assert prio == "urgent" and "found by the orbit search only" in lines[0] and "off sunward" not in lines[0]
 
 
+def test_notify_logs_why_a_candidate_was_held():
+    from kreutz import notify
+    d = {"track": [], "paged": False, "heading_deg": 7, "lane_px": 74}
+    assert notify.held_because(dict(d, found_by="orbit")) == "found by the orbit search only"
+    assert "off sunward" in notify.held_because(d) and "lane" not in notify.held_because(d)
+    assert notify.held_because(dict(d, known={"reporter": "x"})) == "known comet"
+
+
 def test_orbit_fit_recovers_a_kreutz_track():
     from kreutz import orbit
     e = orbit.Elements(T=datetime(2026, 10, 23, 18, 0), node=12.0, peri=89.0, i=143.9)
