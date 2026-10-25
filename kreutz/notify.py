@@ -44,7 +44,9 @@ def compose(d, name):
     """(title, lines, priority, tags) for an alert or confirmed file's
     contents, or None when nothing should be sent: a comet somebody has
     already reported gets one quiet message, at the confirmed stage, and
-    a candidate off the lane none until it's confirmed."""
+    a candidate the watcher didn't page (off sunward, too slow, or found
+    by the orbit search alone without --orbit-pages) none until it's
+    confirmed."""
     track = d["track"] if isinstance(d, dict) else d
     c = track[-1]
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
@@ -79,6 +81,19 @@ def compose(d, name):
             "high" if not others else "default", "comet")
 
 
+def held_because(d):
+    """Why compose() sent nothing, for the log: the watcher's own reason."""
+    if not isinstance(d, dict):
+        return "not paged"
+    if d.get("known"):
+        return "known comet"
+    if d.get("found_by") == "orbit":
+        return "found by the orbit search only"
+    if "heading_deg" in d:
+        return f"not paged ({d['heading_deg']} deg off sunward or too slow)"
+    return f"{d.get('lane_px')} px off the Kreutz lane"
+
+
 def post(alert_path):
     server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
     topic = os.environ.get("NTFY_TOPIC")
@@ -89,8 +104,7 @@ def post(alert_path):
     d = json.load(open(p))
     msg = compose(d, p.name)
     if msg is None:
-        why = "known comet" if isinstance(d, dict) and d.get("known") else "off the lane"
-        print(f"{p.name}: {why} at the candidate stage; not notifying")
+        print(f"{p.name}: {held_because(d)} at the candidate stage; not notifying")
         return
     _send(server, topic, *msg)
 
