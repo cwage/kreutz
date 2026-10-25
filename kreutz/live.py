@@ -42,10 +42,11 @@ reported, and the recent decisions. data/live/status.html reads it:
 
     python -m http.server -d data 8000   # then http://localhost:8000/live/status.html
 
-Kreutz reports from other coronagraphs (CCOR-2, LASCO) can't be matched
-by position. A track in the Kreutz lane (lane.in_lane) while another
-instrument has a Kreutz comet in view counts as that comet, matched "by
-time+lane"; the alert for anything else lists such reports as a hint.
+On CCOR-1 and CCOR-2 a report, from either of them, is matched to a
+track by one Kreutz orbit through both ("by orbit"). LASCO's reports
+can't be: a track in the Kreutz lane (lane.in_lane) while LASCO has a
+Kreutz comet in view counts as that comet, matched "by time+lane"; the
+alert for anything else lists such reports as a hint.
 
 --notify CMD runs CMD with the alert's .json path appended, e.g.
 --notify "python -m kreutz.notify" to post to an ntfy topic (notify.py);
@@ -99,7 +100,7 @@ import numpy as np
 from PIL import Image
 
 from . import DATA, page
-from .instrument import CURRENT as INSTRUMENT
+from .instrument import CURRENT as INSTRUMENT, INSTRUMENTS
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
                        report_points)
 from .lane import build_field, in_lane, lane_px, off_flow
@@ -226,7 +227,8 @@ def reported_by(track, t, reps):
     observations), the earliest posted: that's who found it."""
     track = [dict(c, t=datetime.fromisoformat(c["time"])) for c in track]
     candidates = report_points(reps, t.date())
-    fits = by_orbit(track, candidates) if ORBIT_MATCH else None
+    theirs = [(r, pts, inst) for inst in OTHER_CCOR for r, pts, posted in report_points(reps, t.date(), inst)]
+    fits = by_orbit(track, candidates, theirs) if ORBIT_MATCH else None
     if fits is None:  # no orbit to test with: every report by position
         fits, rest = [], candidates
     else:  # the orbit decides for reports with a path; one-point reports by position
@@ -249,19 +251,29 @@ def reported_by(track, t, reps):
 # orbit with it, when it was Cerati's comet of that morning, 19"). Where
 # frames carry a helioprojective WCS, one Kreutz orbit through a report's
 # points and our track decides, however far apart in time.
+# The same test ties a track to a report from the other CCOR, each set of
+# points through its own instrument's frames and seen from its own place
+# (Earth, L1): most Kreutz comets cross both fields and are reported from
+# one, and the other's page read "UNREPORTED, maybe X's" for a comet
+# somebody had found hours before. LASCO's frames carry no such WCS here,
+# so its reports stay a hint by time.
 ORBIT_MATCH = INSTRUMENT.key in ("ccor1", "ccor2")
+OTHER_CCOR = [INSTRUMENTS[k] for k in ("ccor1", "ccor2") if ORBIT_MATCH and k != INSTRUMENT.key]
 
 
-def by_orbit(track, candidates):
+def by_orbit(track, candidates, theirs=()):
     """The reports (with 2+ points) one family orbit fits together with
-    the track, to SAME_RMS; None when the track itself has no such orbit
-    (too few points on frames on disk, or not a Kreutz path) to test with."""
+    the track, to SAME_RMS: ours, (report, points, posted), and the other
+    CCOR's, (report, points, instrument). None when the track itself has
+    no such orbit (too few points on frames on disk, or not a Kreutz path)
+    to test with."""
     own = [(c["t"], c["x"], c["y"]) for c in track]
     try:
         best = orbit_of(own)
         if best is None or best[1] > SAME_RMS:
             return None
-        return [r for r, pts, posted in candidates if len(pts) >= 2 and joint_rms(best[0], own, pts) < SAME_RMS]
+        return ([r for r, pts, posted in candidates if len(pts) >= 2 and joint_rms(best[0], own, pts) < SAME_RMS]
+                + [r for r, pts, inst in theirs if len(pts) >= 2 and joint_rms(best[0], own, pts, inst) < SAME_RMS])
     except Exception as e:  # a missing frame or a failed fit must not stop the watcher
         print(f"orbit match: {e}", file=sys.stderr)
         return None
@@ -986,10 +998,13 @@ def main():
                     reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     known_rep = reported_by(ch, t, reps) if reps else None
                     others = other_instruments(ch, reps)
-                    if not known_rep and others and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
-                        # A lane track while another coronagraph has a Kreutz
-                        # comet in view: the same object.
-                        known_rep = dict(others[0], how="time+lane")
+                    # A lane track while another coronagraph has a Kreutz comet
+                    # in view: the same object. Not the other CCOR's, though:
+                    # reported_by has tested those by orbit, and no match there
+                    # means a different comet, which mustn't go unpaged.
+                    by_time = [o for o in others if o["telescope"] not in {i.telescope for i in OTHER_CCOR}]
+                    if not known_rep and by_time and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
+                        known_rep = dict(by_time[0], how="time+lane")
                     # Known or not, the track gets an alert file, a vetting
                     # animation and a follow-up, so a reported comet is
                     # measured and pictured like any other; only the log

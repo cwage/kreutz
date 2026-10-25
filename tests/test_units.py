@@ -986,8 +986,8 @@ def test_orbit_match_ties_a_report_to_a_track_a_day_later(monkeypatch):
     from kreutz import orbit, orbitsearch
     # positions in degrees stand in for report coordinates: no WCS needed
     monkeypatch.setattr(orbitsearch, "sky_points",
-                        lambda pts: ([p[0] for p in pts], [p[1] for p in pts], [p[2] for p in pts]))
-    monkeypatch.setattr(orbitsearch, "_where", lambda: "l1")
+                        lambda pts, inst=None: ([p[0] for p in pts], [p[1] for p in pts], [p[2] for p in pts]))
+    monkeypatch.setattr(orbitsearch, "_where", lambda inst=None: "l1")
     e = orbit.Elements(T=datetime(2026, 10, 25, 16, 0), node=12.0,
                        peri=orbitsearch.PERI_A + orbitsearch.PERI_B * 12.0, i=orbitsearch.INCLINATION)
 
@@ -1002,3 +1002,25 @@ def test_orbit_match_ties_a_report_to_a_track_a_day_later(monkeypatch):
     assert rms < 60
     assert orbitsearch.joint_rms(best, track, report) < orbitsearch.SAME_RMS
     assert orbitsearch.joint_rms(best, track, other) > orbitsearch.SAME_RMS
+
+
+def test_orbit_match_across_instruments(monkeypatch):
+    from kreutz import orbit, orbitsearch
+    from kreutz.instrument import INSTRUMENTS
+    monkeypatch.setattr(orbitsearch, "sky_points",
+                        lambda pts, inst=None: ([p[0] for p in pts], [p[1] for p in pts], [p[2] for p in pts]))
+    monkeypatch.setattr(orbitsearch, "INSTRUMENT", INSTRUMENTS["ccor1"])
+    e = orbit.Elements(T=datetime(2026, 10, 24, 6, 0), node=13.0,
+                       peri=orbitsearch.PERI_A + orbitsearch.PERI_B * 13.0, i=orbitsearch.INCLINATION)
+
+    def path(e, start, n, where):
+        times = [start + timedelta(minutes=15 * k) for k in range(n)]
+        tx, ty = orbit.helioprojective(e, times, where)
+        return list(zip(times, tx, ty))
+    track = path(e, datetime(2026, 10, 23, 8, 0), 12, "earth")        # CCOR-1, from Earth
+    report = path(e, datetime(2026, 10, 22, 23, 45), 6, "l1")         # the CCOR-2 report, from L1
+    best, rms = orbitsearch.orbit_of(track)
+    assert rms < 60
+    assert orbitsearch.joint_rms(best, track, report, INSTRUMENTS["ccor2"]) < 60
+    later = path(replace(e, T=e.T + timedelta(hours=6)), datetime(2026, 10, 23, 5, 45), 6, "l1")
+    assert orbitsearch.joint_rms(best, track, later, INSTRUMENTS["ccor2"]) > orbitsearch.SAME_RMS
