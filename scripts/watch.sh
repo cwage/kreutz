@@ -10,10 +10,27 @@
 #     lost reported comets; alerts that came to nothing)
 # Runs until killed; meant for a terminal or a monitor that reads its lines.
 cd "$(dirname "$0")/.."
+# Polls each container's log every 30 s from the last timestamp seen,
+# rather than holding `docker logs -f` open: a followed stream went quiet
+# without exiting three times on 2026-10-24/25 and three alerts never
+# reached this script.
 follow() {  # $1 label, $2 container
-  docker logs -f --since 1m "$2" 2>&1 | grep -v --line-buffered -E 'Warning|warnings.warn|feed error' \
-    | grep -E --line-buffered 'ALERT|CONFIRMED|REJECTED|by position|track at .* is |Traceback|Error|error|failed|skipped' \
-    | sed -u "s/^/[$1] /"
+  local since out
+  since=$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%S.%NZ)
+  while docker inspect -f '{{.State.Running}}' "$2" 2>/dev/null | grep -q true; do
+    # docker trims the fraction's trailing zeros; pad it before comparing
+    out=$(docker logs -t --since "$since" "$2" 2>&1 | awk -v s="$since" '
+      function n(t, a, f) { sub(/Z$/, "", t); if (split(t, a, ".") < 2) a[2] = ""; f = a[2]
+                            while (length(f) < 9) f = f "0"; return a[1] "." f }
+      n($1) > n(s)')
+    if [ -n "$out" ]; then
+      since=$(tail -n 1 <<< "$out" | cut -d' ' -f1)
+      cut -d' ' -f2- <<< "$out" | grep -v -E 'Warning|warnings.warn|feed error' \
+        | grep -E 'ALERT|CONFIRMED|REJECTED|by position|by orbit|track at .* is |Traceback|Error|error|failed|skipped' \
+        | sed "s/^/[$1] /"
+    fi
+    sleep 30
+  done
   echo "[$1] log stream ended: container $2 stopped?"
 }
 declare -A box  # instrument key -> watcher container
