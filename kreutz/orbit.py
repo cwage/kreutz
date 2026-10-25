@@ -69,12 +69,15 @@ def heliocentric(e: Elements, times):
 def observer(times, where="earth"):
     """Heliocentric ICRS positions (AU) of the instrument: Earth's (GOES-19
     is a sixth of a lunar distance out, under 0.02 deg of parallax at a
-    sungrazer), or L1's."""
+    sungrazer), or L1's. `where` is one of those for all the times, or a
+    list of them, one per time (a fit through points from both)."""
     t = Time(times)
     earth = get_body_barycentric("earth", t).xyz.to("au").value.T
     sun = get_body_barycentric("sun", t).xyz.to("au").value.T
     o = earth - sun
-    return o * (1 - L1_FRACTION) if where == "l1" else o
+    if isinstance(where, str):
+        return o * (1 - L1_FRACTION) if where == "l1" else o
+    return o * np.where(np.asarray(where) == "l1", 1 - L1_FRACTION, 1.0)[:, None]
 
 
 def helioprojective(e: Elements, times, where="earth"):

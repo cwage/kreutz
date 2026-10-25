@@ -188,12 +188,17 @@ def swpc_canvas_to_report(t, x, y):
     return float(col), float(h["NAXIS2"] - 1 - row)
 
 
-def report_points(reports, day):
+def report_points(reports, day, inst=None):
     """(report, [(time, x, y)]) for reports with points on or around `day`,
-    in L1b report coordinates (see swpc_canvas_to_report)."""
+    in L1b report coordinates (see swpc_canvas_to_report), from our
+    instrument or `inst`. Points measured on SWPC's canvas convert only for
+    our own instrument; another's are left out."""
+    inst = inst or INSTRUMENT
     out = []
     for r in reports:
-        if not r["points"] or r["telescope"] != INSTRUMENT.telescope:
+        if not r["points"] or r["telescope"] != inst.telescope:
+            continue
+        if inst is not INSTRUMENT and inst.swpc_canvas and r.get("reporter") in SWPC_CANVAS_REPORTERS:
             continue
         posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
         pts = []

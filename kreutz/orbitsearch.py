@@ -20,7 +20,7 @@ search.Candidate, positions and velocities in report coordinates.
 """
 
 import warnings
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import numpy as np
 from astropy.io import fits
@@ -148,21 +148,40 @@ def orbit_search(seq: Sequence, last: int, n: int, threshold: float):
     return out
 
 
-def _where():
-    return "l1" if INSTRUMENT.key == "ccor2" else "earth"
+def _where(inst=None):
+    return "l1" if (inst or INSTRUMENT).key == "ccor2" else "earth"
 
 
-def sky_points(pts):
-    """[(time, x, y)] in report coordinates to (times, Tx, Ty) in deg, each
-    through the WCS of the frame within half a cadence of it; points with
-    no such frame on disk are dropped."""
-    from .frames import CADENCE, frame_paths
+_LISTING = {}
+
+
+def _frame_near(inst, t):
+    """`inst`'s frame within half a cadence of t on disk, or None."""
+    best = None
+    for d in sorted({(t - inst.cadence / 2).date(), (t + inst.cadence / 2).date()}):
+        key = (inst.key, d)
+        if key not in _LISTING or d >= datetime.utcnow().date() - timedelta(days=1):  # today's still growing
+            _LISTING[key] = [(datetime.strptime(inst.name_re.search(p.name).group(1), "%Y%m%dT%H%M%S"), p)
+                             for p in (inst.frames_dir / f"{d:%Y/%m/%d}").glob(inst.glob())
+                             if inst.name_re.search(p.name)]
+        for ft, p in _LISTING[key]:
+            if abs(ft - t) <= inst.cadence / 2 and (best is None or abs(ft - t) < abs(best[0] - t)):
+                best = (ft, p)
+    return best[1] if best else None
+
+
+def sky_points(pts, inst=None):
+    """[(time, x, y)] in `inst`'s (default ours) report coordinates to
+    (times, Tx, Ty) in deg, each through the WCS of that instrument's frame
+    within half a cadence of it; points with no such frame on disk are
+    dropped."""
+    inst = inst or INSTRUMENT
     ts, tx, ty = [], [], []
     for t, x, y in pts:
-        paths = frame_paths(t - CADENCE / 2, t + CADENCE / 2)
-        if not paths:
+        path = _frame_near(inst, t)
+        if path is None:
             continue
-        w, H, _ = _wcs(paths[0])
+        w, H, _ = _wcs(path)
         lon, lat = w.wcs_pix2world([[x, H - 1 - y]], 0)[0]
         ts.append(t)
         tx.append(lon)
@@ -188,10 +207,14 @@ def orbit_of(pts):
     return best
 
 
-def joint_rms(e, pts, others):
+def joint_rms(e, pts, others, inst=None):
     """The rms (arcsec) of one orbit, started from e with its perihelion
-    time free, through both point lists: under SAME_RMS, one comet."""
-    ts, tx, ty = (a + b for a, b in zip(sky_points(pts), sky_points(others)))
-    if len(ts) < 3:
+    time free, through our points and `others` (in `inst`'s coordinates,
+    default ours), each seen from its own instrument: under SAME_RMS, one
+    comet."""
+    a, b = sky_points(pts), sky_points(others, inst)
+    ts, tx, ty = (x + y for x, y in zip(a, b))
+    if len(ts) < 3 or not b[0]:
         return float("inf")
-    return orbit.fit(ts, tx, ty, e, _where(), free=("T",))[1]
+    where = [_where()] * len(a[0]) + [_where(inst)] * len(b[0])
+    return orbit.fit(ts, tx, ty, e, where, free=("T",))[1]
