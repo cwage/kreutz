@@ -43,14 +43,21 @@ def listing(since=None):
 
 
 def pull(frames, get=_get):
-    """Download the (time, url, destination) frames not on disk yet; how many were new."""
+    """Download the (time, url, destination) frames not on disk yet; how many were new.
+    A body that isn't a FITS file (LASCO's server once answered 200 with
+    nothing, 2026-10-25 23:42, and the C3 watcher died reading it) isn't
+    saved; the next poll asks for it again."""
     new = 0
     for _, url, dest in frames:
         if dest.exists():
             continue
+        body = get(url)
+        if not body.startswith(b"SIMPLE  ="):
+            print(f"{dest.name}: not a FITS file ({len(body)} bytes); trying again next poll", file=sys.stderr)
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".part")
-        tmp.write_bytes(get(url))
+        tmp.write_bytes(body)
         tmp.rename(dest)
         new += 1
     return new

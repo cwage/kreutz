@@ -680,7 +680,7 @@ def test_frames_off_the_grid_are_kept_a_half_step_apart(tmp_path, monkeypatch):
     # (5.6 min after the one before, as after the long gap that evening).
     stamps = ["031205", "032405", "041740", "042817", "043351", "043851"]
     for k, s in enumerate(stamps):
-        (d / f"C2_05_20250819T{s}_{22999706 + k}.fts").touch()
+        (d / f"C2_05_20250819T{s}_{22999706 + k}.fts").write_bytes(b"x")  # not empty: empty files are skipped
     got = [frames.frame_time(p) for p in frames.frame_paths(datetime(2025, 8, 19), datetime(2025, 8, 19, 5))]
     assert [f"{t:%H%M%S}" for t in got] == ["031205", "032405", "041740", "042817", "043851"]
     seq = FakeSeq(got)
@@ -1024,3 +1024,11 @@ def test_orbit_match_across_instruments(monkeypatch):
     assert orbitsearch.joint_rms(best, track, report, INSTRUMENTS["ccor2"]) < 60
     later = path(replace(e, T=e.T + timedelta(hours=6)), datetime(2026, 10, 23, 5, 45), 6, "l1")
     assert orbitsearch.joint_rms(best, track, later, INSTRUMENTS["ccor2"]) > orbitsearch.SAME_RMS
+
+
+def test_pull_keeps_only_fits_files(tmp_path):
+    from kreutz import sync
+    good, empty = tmp_path / "a.fts", tmp_path / "b.fts"
+    bodies = {"u/a": b"SIMPLE  =                    T" + b" " * 50, "u/b": b""}
+    assert sync.pull([(None, "u/a", good), (None, "u/b", empty)], get=bodies.__getitem__) == 1
+    assert good.exists() and not empty.exists() and not empty.with_suffix(".part").exists()
