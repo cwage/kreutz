@@ -752,7 +752,7 @@ def pictures(name, root=None):
 
 
 def status(chains, pending, t, recent, now, rendered=lambda name: None,
-           files_of=lambda name: {"alert": None, "confirmed": None}, reps=None):
+           files_of=lambda name: {"alert": None, "confirmed": None}, reps=None, waiting=None):
     """The status page's data: what's open, what's being followed and at
     which stage, and the last decisions. Paths are relative to the live
     directory; "measure_prefix" + an object's "alert" is its kreutz.report command.
@@ -816,16 +816,16 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
             "open": len(chains), "longest": len(longest) if longest else 0,
             "longest_at": [longest[-1]["x"], longest[-1]["y"]] if longest else None,
-            "following": following, "recent": decisions}
+            "following": following, "recent": decisions, "waiting": waiting}
 
 
-def write_status(chains, pending, t, reps=None):
+def write_status(chains, pending, t, reps=None, waiting=None):
     p = LIVE / "log.jsonl"
     recent = [json.loads(ln) for ln in open(p).readlines()[-STATUS_RECENT:]] if p.exists() else []
     recent.reverse()
 
     s = status(chains, pending, t, recent, datetime.now(timezone.utc).replace(tzinfo=None),
-               rendered=pictures, files_of=alert_files, reps=reps)
+               rendered=pictures, files_of=alert_files, reps=reps, waiting=waiting)
     tmp = LIVE / "status.json.tmp"
     tmp.write_text(json.dumps(s, indent=1))
     tmp.replace(LIVE / "status.json")
@@ -882,6 +882,7 @@ def main():
     field = None  # the Kreutz lane, built once a frame shape is known
     pruned = None  # when prune last ran
     reps, reps_at = None, None  # Sungrazer's latest reports, for the status page's matches
+    last_waiting = None  # the last "waiting after a data gap" note said
     while True:
         try:
             new = sync(datetime.now(timezone.utc).replace(tzinfo=None) - history - timedelta(hours=1))
@@ -896,6 +897,25 @@ def main():
             field = lane_field(now) if seq.shape == (FRAME_ROWS, FRAME_COLS) else build_field(seq.shape, when=now)
         todo = [i for i, t in enumerate(seq.times)
                 if t not in done and i >= BG_FRAMES + BG_SKIP + args.n]
+        # After a gap in the feed a search needs BG_FRAMES + BG_SKIP + n
+        # frames before its window again, to rebuild the background from
+        # frames recent enough to subtract (C3 waited 5 h after its
+        # 2026-10-26 11:18-16:30 gap). Say so, and keep the status page
+        # fresh meanwhile, instead of going silent like a stalled watcher.
+        need = BG_FRAMES + BG_SKIP + args.n + 1 - len(seq.times)
+        if not todo and seq.times and seq.times[-1] not in done and need > 0:
+            waiting = (f"waiting for {need} more frame{'s' if need != 1 else ''} after a data gap: a search "
+                       f"needs {BG_FRAMES + BG_SKIP + args.n} before its window, {len(seq.times)} on hand "
+                       f"since {seq.times[0]:%m-%d %H:%M}")
+            if waiting != last_waiting:
+                print(f"{seq.times[-1]:%Y-%m-%d %H:%M}: {waiting}", file=sys.stderr)
+                try:
+                    write_status(chains, pending, seq.times[-1], reps, waiting=waiting)
+                except Exception as e:
+                    print(f"status error: {e}", file=sys.stderr)
+                last_waiting = waiting
+        else:
+            last_waiting = None
         for last in todo:
             t = seq.times[last]
             try:
