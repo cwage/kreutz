@@ -111,7 +111,9 @@ def frame_paths(start, end):
         # cadence, 2025-07-18 03:45-06:15) come as _0C and stand in for it.
         paths += (L1B / f"{d:%Y/%m/%d}").glob(INSTRUMENT.glob())
         d += timedelta(days=1)
-    paths = sorted((p for p in paths if start <= frame_time(p) <= end), key=frame_time)
+    # an empty file is a failed download, not a frame (a 0-byte C3 file
+    # stopped its watcher on 2026-10-25)
+    paths = sorted((p for p in paths if start <= frame_time(p) <= end and p.stat().st_size > 0), key=frame_time)
     if INSTRUMENT.second is not None:
         return [p for p in paths if frame_time(p).minute % INSTRUMENT.cadence_min == 0]
     kept = []
