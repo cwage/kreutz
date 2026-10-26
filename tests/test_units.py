@@ -1032,3 +1032,14 @@ def test_pull_keeps_only_fits_files(tmp_path):
     bodies = {"u/a": b"SIMPLE  =                    T" + b" " * 50, "u/b": b""}
     assert sync.pull([(None, "u/a", good), (None, "u/b", empty)], get=bodies.__getitem__) == 1
     assert good.exists() and not empty.exists() and not empty.with_suffix(".part").exists()
+
+
+def test_pull_writes_through_a_part_file_of_its_own(tmp_path, monkeypatch):
+    from kreutz import sync
+    dest = tmp_path / "a.fts"
+    shared = dest.with_suffix(".part")
+    shared.write_bytes(b"another process's half-written frame")
+    body = b"SIMPLE  =                    T" + b" " * 50
+    assert sync.pull([(None, "u/a", dest)], get=lambda url: body) == 1
+    assert dest.read_bytes() == body and shared.exists()  # the other process's part file untouched
+    assert not list(tmp_path.glob(".*.part"))

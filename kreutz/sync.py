@@ -16,6 +16,7 @@ weeks, so a LASCO watcher with a long gap behind it wants this running).
 """
 
 import argparse
+import os
 import re
 import sys
 import time
@@ -56,9 +57,14 @@ def pull(frames, get=_get):
             print(f"{dest.name}: not a FITS file ({len(body)} bytes); trying again next poll", file=sys.stderr)
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".part")
+        # A part file of our own: the CCOR-2 watcher and the sync-ccor2
+        # mirror pull the same new frames, and with one shared name one's
+        # rename found the other's already done (a feed error and a poll's
+        # delay, three times on 2026-10-24..26). The frames are the same
+        # bytes, so whichever lands last is fine.
+        tmp = dest.with_name(f".{dest.name}.{os.getpid()}.part")
         tmp.write_bytes(body)
-        tmp.rename(dest)
+        os.replace(tmp, dest)
         new += 1
     return new
 
