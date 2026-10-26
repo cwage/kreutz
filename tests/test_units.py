@@ -1043,3 +1043,10 @@ def test_pull_writes_through_a_part_file_of_its_own(tmp_path, monkeypatch):
     assert sync.pull([(None, "u/a", dest)], get=lambda url: body) == 1
     assert dest.read_bytes() == body and shared.exists()  # the other process's part file untouched
     assert not list(tmp_path.glob(".*.part"))
+
+
+def test_status_carries_the_wait_after_a_data_gap():
+    t = datetime(2026, 10, 26, 19, 30)
+    s = live.status([], [], t, [], t, waiting="waiting for 4 more frames after a data gap")
+    assert s["waiting"].startswith("waiting for 4") and s["updated_utc"] == "2026-10-26T19:30:00"
+    assert live.status([], [], t, [], t)["waiting"] is None

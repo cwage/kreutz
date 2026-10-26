@@ -260,7 +260,7 @@ function rebase(o, inst) {
 function watcherLine(inst, s, err) {
   if (!s) return `<div class="down"><b>${esc(inst.label)}</b> · no watcher (${esc(err)})</div>`;
   const stale = (Date.now() - Date.parse(s.updated_utc + 'Z')) > 45 * 60000;
-  return `<div><b>${esc(inst.label)}</b> · window ${hhmm(s.window_utc)} · updated ${ago(s.updated_utc)}${stale ? ' <b>(stale: is the watcher running?)</b>' : ''}
+  return `<div><b>${esc(inst.label)}</b> · window ${hhmm(s.window_utc)} · updated ${ago(s.updated_utc)}${stale ? ' <b>(stale: is the watcher running?)</b>' : ''}${s.waiting ? ` · <b>${esc(s.waiting)}</b>` : ''}
     · ${s.open} open chain(s)${s.longest ? `, longest ${s.longest} window(s) at ${s.longest_at[0].toFixed(0)},${s.longest_at[1].toFixed(0)}` : ''}</div>`;
 }
 
