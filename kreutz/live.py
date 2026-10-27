@@ -272,8 +272,13 @@ def by_orbit(track, candidates, theirs=()):
         best = orbit_of(own)
         if best is None or best[1] > SAME_RMS:
             return None
-        return ([r for r, pts, posted in candidates if len(pts) >= 2 and joint_rms(best[0], own, pts) < SAME_RMS]
-                + [r for r, pts, inst in theirs if len(pts) >= 2 and joint_rms(best[0], own, pts, inst) < SAME_RMS])
+        # A report filed under another group (Non-Group, Meyer, ...) can't
+        # be on a Kreutz orbit; fitting one anyway only wanders (John
+        # Marrone's non-group CCOR-1 comet, 2026-10-26, drove the perihelion
+        # time out of range against every track the status page rechecked).
+        ok = lambda r, pts: len(pts) >= 2 and r.get("group") in ("Kreutz", None)
+        return ([r for r, pts, posted in candidates if ok(r, pts) and joint_rms(best[0], own, pts) < SAME_RMS]
+                + [r for r, pts, inst in theirs if ok(r, pts) and joint_rms(best[0], own, pts, inst) < SAME_RMS])
     except Exception as e:  # a missing frame or a failed fit must not stop the watcher
         print(f"orbit match: {e}", file=sys.stderr)
         return None
