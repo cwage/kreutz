@@ -842,6 +842,27 @@ def open_tracks(chains):
             f"at {longest[-1]['x']:.0f},{longest[-1]['y']:.0f})")
 
 
+# A gap longer than this in the frames makes the background stale: a
+# search after it waits until the background and its window are built
+# from frames after the gap. The background already spans BG_FRAMES
+# frames (3-4 h), so a shorter gap adds little staleness; the feed
+# outages of 2026-10-26 (LASCO: 3.5-5 h) left 3-4 h old frames in the
+# background of the first windows after them, and both of LASCO's alerts
+# that morning (C2 07:00, C3 09:42) were residue of that.
+BG_MAX_GAP = timedelta(hours=2)
+
+
+def run_starts(times):
+    """For each frame, the index of the first frame of its run: the frames
+    since the last gap longer than BG_MAX_GAP."""
+    out, start = [], 0
+    for i, t in enumerate(times):
+        if i and t - times[i - 1] > BG_MAX_GAP:
+            start = i
+        out.append(start)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--threshold", type=float, default=5.5)
@@ -895,18 +916,19 @@ def main():
         sun_xy = seq.rc_to_report(*seq.sun_rc())  # report coords, for pageworthy
         if field is None or INSTRUMENT.season_days:
             field = lane_field(now) if seq.shape == (FRAME_ROWS, FRAME_COLS) else build_field(seq.shape, when=now)
-        todo = [i for i, t in enumerate(seq.times)
-                if t not in done and i >= BG_FRAMES + BG_SKIP + args.n]
-        # After a gap in the feed a search needs BG_FRAMES + BG_SKIP + n
-        # frames before its window again, to rebuild the background from
-        # frames recent enough to subtract (C3 waited 5 h after its
-        # 2026-10-26 11:18-16:30 gap). Say so, and keep the status page
-        # fresh meanwhile, instead of going silent like a stalled watcher.
-        need = BG_FRAMES + BG_SKIP + args.n + 1 - len(seq.times)
+        need_before = BG_FRAMES + BG_SKIP + args.n
+        starts = run_starts(seq.times)
+        todo = [i for i, t in enumerate(seq.times) if t not in done and i - starts[i] >= need_before]
+        # After a gap in the feed a search waits for need_before frames
+        # since the gap, so the background it subtracts is built from
+        # frames after it: say so, and keep the status page fresh
+        # meanwhile, instead of going silent like a stalled watcher.
+        last = len(seq.times) - 1
+        need = need_before - (last - starts[last]) if seq.times else 0
         if not todo and seq.times and seq.times[-1] not in done and need > 0:
             waiting = (f"waiting for {need} more frame{'s' if need != 1 else ''} after a data gap: a search "
-                       f"needs {BG_FRAMES + BG_SKIP + args.n} before its window, {len(seq.times)} on hand "
-                       f"since {seq.times[0]:%m-%d %H:%M}")
+                       f"needs {need_before} in a row before its window, {last - starts[last] + 1} on hand "
+                       f"since {seq.times[starts[last]]:%m-%d %H:%M}")
             if waiting != last_waiting:
                 print(f"{seq.times[-1]:%Y-%m-%d %H:%M}: {waiting}", file=sys.stderr)
                 try:
