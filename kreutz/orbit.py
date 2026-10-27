@@ -95,6 +95,9 @@ def helioprojective(e: Elements, times, where="earth"):
     return tx, ty
 
 
+T_RANGE_H = 240.0  # hours either side of the start's perihelion time a fit may move it
+
+
 def fit(times, tx, ty, start: Elements, where="earth", free=("T", "node", "peri")):
     """Elements fitted to measured helioprojective positions (deg), varying
     the `free` ones from `start`, and the rms residual in arcsec."""
@@ -113,7 +116,12 @@ def fit(times, tx, ty, start: Elements, where="earth", free=("T", "node", "peri"
         return np.concatenate([mx - tx, my - ty]) * 3600
 
     p0 = [0.0 if name == "T" else getattr(start, name) for name in free]
-    sol = least_squares(resid, p0, x_scale="jac")
+    # The perihelion time held within T_RANGE_H of the start: on a short,
+    # poorly constraining track it could run off to dates datetime can't
+    # hold ("date value out of range", CCOR-2's orbit match, 2026-10-27).
+    lo = [-T_RANGE_H if name == "T" else -np.inf for name in free]
+    hi = [T_RANGE_H if name == "T" else np.inf for name in free]
+    sol = least_squares(resid, p0, x_scale="jac", bounds=(lo, hi))
     e = make(sol.x)
     rms = float(np.sqrt(np.mean(sol.fun ** 2)))
     return e, rms

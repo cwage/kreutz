@@ -1060,3 +1060,12 @@ def test_a_search_waits_for_fresh_frames_after_a_long_gap():
     assert starts[19] == 0 and starts[20:] == [20] * 5
     short = [t0 + timedelta(minutes=12 * k) for k in range(10)] + [t0 + timedelta(hours=3, minutes=12 * k) for k in range(5)]
     assert live.run_starts(short) == [0] * 15  # a gap under BG_MAX_GAP doesn't restart the run
+
+
+def test_orbit_fit_keeps_the_perihelion_time_in_range():
+    from kreutz import orbit
+    # a point 42 deg from the Sun: unbounded, the fit moved T 14.8 days
+    times = [datetime(2026, 10, 27, 4, 0) + timedelta(minutes=15 * k) for k in range(4)]
+    start = orbit.Elements(T=datetime(2026, 10, 27, 12, 0), node=12.0, peri=89.0, i=143.9)
+    e, rms = orbit.fit(times, [30.0] * 4, [-30.0] * 4, start, "l1", free=("T",))
+    assert abs((e.T - start.T).total_seconds()) <= orbit.T_RANGE_H * 3600 + 1
