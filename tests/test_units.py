@@ -1050,3 +1050,13 @@ def test_status_carries_the_wait_after_a_data_gap():
     s = live.status([], [], t, [], t, waiting="waiting for 4 more frames after a data gap")
     assert s["waiting"].startswith("waiting for 4") and s["updated_utc"] == "2026-10-26T19:30:00"
     assert live.status([], [], t, [], t)["waiting"] is None
+
+
+def test_a_search_waits_for_fresh_frames_after_a_long_gap():
+    t0 = datetime(2026, 10, 26, 0, 0)
+    times = [t0 + timedelta(minutes=12 * k) for k in range(20)]                    # until 03:48
+    times += [t0 + timedelta(hours=8, minutes=12 * k) for k in range(5)]          # 4 h gap, then 5 frames
+    starts = live.run_starts(times)
+    assert starts[19] == 0 and starts[20:] == [20] * 5
+    short = [t0 + timedelta(minutes=12 * k) for k in range(10)] + [t0 + timedelta(hours=3, minutes=12 * k) for k in range(5)]
+    assert live.run_starts(short) == [0] * 15  # a gap under BG_MAX_GAP doesn't restart the run
