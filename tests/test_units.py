@@ -494,7 +494,8 @@ def test_lane_distance_gates_the_page_but_not_the_follow_up():
     far = {"track": track, "other_instruments": [], "lane_px": 435, "heading_deg": 62, "paged": False}
     assert notify.compose(far, "a.json") is None  # a candidate not moving like a sungrazer doesn't page
     title, lines, prio, _ = notify.compose(dict(far, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")
-    assert prio == "urgent" and "62 deg off sunward" in lines[0]  # confirmed, it does, and says so
+    assert prio == "low" and "62 deg off sunward" in lines[0]  # confirmed, a quiet message saying why
+    assert title == "kreutz CCOR-1: confirmed, unlikely Kreutz"
     near = dict(far, heading_deg=3, paged=True)
     assert notify.compose(near, "a.json")[0] == "kreutz CCOR-1: candidate, UNREPORTED"
     assert notify.compose({"track": track, "other_instruments": []}, "a.json")[2] == "high"  # older file: pages
@@ -927,6 +928,33 @@ def test_notify_holds_an_orbit_only_candidate_until_confirmed():
     assert notify.compose(d, "a.json") is None
     title, lines, prio, _ = notify.compose(dict(d, kind="confirmed", frames=5, note="ok"), "a.confirmed.json")
     assert prio == "urgent" and "found by the orbit search only" in lines[0] and "off sunward" not in lines[0]
+
+
+def test_notify_holds_a_track_on_no_kreutz_orbit_and_confirms_it_quietly():
+    from kreutz import notify
+    track = [{"time": "2026-10-28T16:00:25", "x": 1421.0, "y": 1441.0, "vx": -8.0, "vy": -5.0}]
+    d = {"track": track, "other_instruments": [], "paged": False, "heading_deg": 12,
+         "orbit_rms": 2540, "off_orbit": True}
+    assert notify.compose(d, "a.json") is None
+    assert notify.held_because(d) == 'fits no Kreutz orbit (2540")'
+    title, lines, prio, _ = notify.compose(dict(d, kind="confirmed", frames=9, note="ok"), "a.confirmed.json")
+    assert prio == "low" and 'fits no Kreutz orbit (2540")' in lines[0] and "off sunward" not in lines[0]
+
+
+def test_orbit_gate_measures_the_track_and_fails_open(monkeypatch):
+    track = [{"time": f"2026-10-28T16:{m:02d}:25", "x": 1421.0 - m, "y": 1441.0 - m, "vx": -8.0, "vy": -5.0}
+             for m in (0, 15, 30)]
+    seen = []
+    monkeypatch.setattr(live, "orbit_of", lambda pts: seen.append(pts) or (None, 2540.4))
+    assert live.orbit_rms(track) == 2540 and seen[0][1] == (datetime(2026, 10, 28, 16, 15, 25), 1406.0, 1426.0)
+    monkeypatch.setattr(live, "orbit_of", lambda pts: None)  # too few points on frames on disk
+    assert live.orbit_rms(track) is None
+
+    def fails(pts):
+        raise ValueError("date value out of range")
+    monkeypatch.setattr(live, "orbit_of", fails)
+    assert live.orbit_rms(track) is None  # a fit that can't run holds nothing
+    assert live.ORBIT_GATE and live.OFF_ORBIT_RMS == 1000.0  # CCOR-1, the default instrument
 
 
 def test_notify_logs_why_a_candidate_was_held():

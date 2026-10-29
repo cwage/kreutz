@@ -15,11 +15,15 @@ A comet somebody has already reported (the file's "known") gets a single
 low-priority message when it's confirmed, and nothing at the candidate
 stage. Nor does a candidate that doesn't move like a sungrazer (the
 file's "paged" false: pointed more than live.PAGE_HEADING off the Sun, or
-slower than the instrument's page_speed; older files say "near_lane");
-the watcher keeps following it, and it pages if it's confirmed, with
-the distance in the message. A track only the orbit search found
-("found_by": "orbit", live.py --orbit-threshold) is held back the same way
-unless the watcher runs with --orbit-pages.
+slower than the instrument's page_speed, or on CCOR-1 fitting no Kreutz
+orbit, "off_orbit"; older files say "near_lane"): the watcher keeps
+following it, and if it's confirmed it gets one low-priority message
+saying why it wasn't paged. Such confirmations had paged urgently, and
+the ones that came were all non-Kreutz movers (the Marsden comet receding,
+94 deg off sunward, 2026-10-29 01:23). A track only the orbit search
+found ("found_by": "orbit", live.py --orbit-threshold) is held back the
+same way unless the watcher runs with --orbit-pages, but it's on a Kreutz
+orbit by construction, so its confirmation pages in full.
 """
 
 import json
@@ -44,9 +48,10 @@ def compose(d, name):
     """(title, lines, priority, tags) for an alert or confirmed file's
     contents, or None when nothing should be sent: a comet somebody has
     already reported gets one quiet message, at the confirmed stage, and
-    a candidate the watcher didn't page (off sunward, too slow, or found
-    by the orbit search alone without --orbit-pages) none until it's
-    confirmed."""
+    a candidate the watcher didn't page (off sunward, too slow, off any
+    Kreutz orbit, or found by the orbit search alone without
+    --orbit-pages) none until it's confirmed, and then a quiet one unless
+    the orbit search found it."""
     track = d["track"] if isinstance(d, dict) else d
     c = track[-1]
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
@@ -67,9 +72,15 @@ def compose(d, name):
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
     if far and d.get("found_by") == "orbit":
         hint += "; found by the orbit search only"
+    elif far and d.get("off_orbit"):
+        hint += f"; fits no Kreutz orbit ({d['orbit_rms']}\")"
     elif far:
         hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d
                  else f"; {d['lane_px']} px off the Kreutz lane")
+    if confirmed and far and d.get("found_by") != "orbit":
+        return (f"{who}: confirmed, unlikely Kreutz",
+                [f"Held {d['frames']} frames, {d['note']}; {hint}. Wasn't paged as a candidate.",
+                 "Measure it anyway:", cmd], "low", "comet")
     if confirmed:
         return (f"{who}: CONFIRMED, report ready" if not others else f"{who}: confirmed, likely known",
                 [f"Held {d['frames']} frames, {d['note']}; {hint}.", "Measure and get the form block:", cmd],
@@ -89,6 +100,8 @@ def held_because(d):
         return "known comet"
     if d.get("found_by") == "orbit":
         return "found by the orbit search only"
+    if d.get("off_orbit"):
+        return f"fits no Kreutz orbit ({d['orbit_rms']}\")"
     if "heading_deg" in d:
         return f"not paged ({d['heading_deg']} deg off sunward or too slow)"
     return f"{d.get('lane_px')} px off the Kreutz lane"
