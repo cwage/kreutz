@@ -96,6 +96,7 @@ def helioprojective(e: Elements, times, where="earth"):
 
 
 T_RANGE_H = 240.0  # hours either side of the start's perihelion time a fit may move it
+Q_MIN = 1e-4  # AU, the least perihelion distance a fit may take
 
 
 def fit(times, tx, ty, start: Elements, where="earth", free=("T", "node", "peri")):
@@ -119,7 +120,9 @@ def fit(times, tx, ty, start: Elements, where="earth", free=("T", "node", "peri"
     # The perihelion time held within T_RANGE_H of the start: on a short,
     # poorly constraining track it could run off to dates datetime can't
     # hold ("date value out of range", CCOR-2's orbit match, 2026-10-27).
-    lo = [-T_RANGE_H if name == "T" else -np.inf for name in free]
+    # q held positive: a free q fitted to a track it doesn't suit went
+    # negative and the motion's sqrt(K2 / q^3) NaN (orbitsearch.family_rms).
+    lo = [-T_RANGE_H if name == "T" else Q_MIN if name == "q" else -np.inf for name in free]
     hi = [T_RANGE_H if name == "T" else np.inf for name in free]
     sol = least_squares(resid, p0, x_scale="jac", bounds=(lo, hi))
     e = make(sol.x)

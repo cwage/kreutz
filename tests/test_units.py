@@ -1091,6 +1091,25 @@ def test_a_correction_joins_the_report_it_amends_by_its_path():
     assert "k" not in evaluate.amended(rp)  # someone else's report isn't amended
 
 
+def test_orbit_fit_keeps_q_positive(monkeypatch):
+    # A free q fitted to a track it doesn't suit went negative and NaN'd the
+    # motion (our Marsden track with Ruan's fragment: 3 RuntimeWarnings).
+    import scipy.optimize
+    from kreutz import orbit
+    seen = {}
+    real = scipy.optimize.least_squares
+
+    def spy(fun, x0, **kw):
+        seen.update(kw)
+        return real(fun, x0, **kw)
+    monkeypatch.setattr(scipy.optimize, "least_squares", spy)
+    e0 = orbit.Elements(T=datetime(2026, 10, 28, 12), q=0.047, i=26.6, node=79.5, peri=24.3)
+    ts = [datetime(2026, 10, 28, 21, 45) + timedelta(minutes=15 * k) for k in range(4)]
+    orbit.fit(ts, [1.5, 1.51, 1.52, 1.53], [2.5, 2.2, 1.9, 1.6], e0, free=("T", "q", "i"))
+    lo, hi = seen["bounds"]
+    assert lo == [-orbit.T_RANGE_H, orbit.Q_MIN, -np.inf] and hi[1] == np.inf
+
+
 def test_a_track_on_no_kreutz_orbit_is_matched_to_other_groups_reports(monkeypatch):
     t0 = datetime(2026, 10, 28, 21, 45)
     track = [{"t": t0 + timedelta(minutes=15 * k), "x": 1357.0 - 3.4 * k, "y": 527.0 - 3.4 * k} for k in range(4)]
