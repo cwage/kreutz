@@ -1049,6 +1049,17 @@ def test_notify_holds_a_track_on_a_line_but_confirms_it_in_full(monkeypatch):
     assert live.line_score(None, 7, track[0]) is None  # can't measure: the page isn't held
 
 
+def test_a_point_on_the_rolled_lasco_frame_turns_to_ours(monkeypatch):
+    # Fields' C2 comet of 2026-10-24 at 04:36: (873, 939) on the frame as it
+    # came, rolled by CROTA1 -4.77; our north-up track had it at (837, 966)
+    monkeypatch.setattr(evaluate, "_roll_at", lambda t: (-4.77293, 510.2, 516.5))
+    x, y = evaluate.lasco_rolled_to_report(datetime(2026, 10, 24, 4, 36), 873.0, 939.0)
+    assert np.hypot(x - 837.0, y - 966.0) < 3.0
+    assert np.hypot(x - 510.2, y - 516.5) == pytest.approx(np.hypot(873.0 - 510.2, 939.0 - 516.5))
+    monkeypatch.setattr(evaluate, "_roll_at", lambda t: None)  # no frame near the report time
+    assert evaluate.lasco_rolled_to_report(datetime(2026, 10, 24, 4, 36), 873.0, 939.0) is None
+
+
 def _rep(rid, kind, posted, reporter="Eryk Banach", telescope="CCOR2"):
     return {"id": rid, "kind": kind, "reporter": reporter, "telescope": telescope,
             "posted_utc": posted, "group": "Kreutz", "points": []}
