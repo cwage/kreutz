@@ -138,7 +138,7 @@ function card(f) {
         · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
         ${f.others ? `· ${f.others} Kreutz report(s) from other instruments` : ''}
-        ${f.found_by === 'orbit' && f.paged === false ? '· orbit search only, not paged' : f.paged === false ? `· ${f.heading_deg}° off sunward, not paged` : f.near_lane === false ? `· ${f.lane_px} px off the lane, not paged` : ''}</div>
+        ${f.found_by === 'orbit' && f.paged === false ? '· orbit search only, not paged' : f.off_orbit ? `· fits no Kreutz orbit (${f.orbit_rms}"), not paged` : f.paged === false ? `· ${f.heading_deg}° off sunward, not paged` : f.near_lane === false ? `· ${f.lane_px} px off the lane, not paged` : ''}</div>
       <code class="cmd">${esc(f._inst.measure_prefix)}${esc(f.alert)}</code>
     </div></div>`;
 }
