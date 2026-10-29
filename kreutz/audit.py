@@ -24,6 +24,11 @@ to the report. A verdict line is printed when one is new or has changed:
 and, once each, every alert that faded or was rejected with no report
 matched to it (FALSE?), to look at by eye.
 
+A report its reporter retracted gets no verdict, and a report and the
+Corrections and Additional Observations that amend it
+(evaluate.amended) share the best verdict among them, "as" the one that
+earned it: the comet was caught if any of its reports' points were.
+
 The searched span starts where this audit first ran on the watcher (the
 watcher's own state only keeps its last ~11 hours), and never before its
 first logged decision: nothing earlier was recorded. What's been said is
@@ -37,7 +42,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .evaluate import FRAME, report_points
+from .evaluate import FRAME, amended, report_points, retracted
 from .instrument import CURRENT as INSTRUMENT
 from .lane import field_or_none
 from .live import LIVE
@@ -103,6 +108,9 @@ def judge(r, pts, cands, fate, newest, field=None):
     return None, hits
 
 
+RANK = {"OK": 0, None: 1, "LOST": 2, "VETO": 3, "MISS": 4}  # best first; None is still open
+
+
 def false_alerts(log, matched=()):
     """{alert stem: its records} for alerts that faded or were rejected
     with no report matched to them, by the watcher or (`matched`, alert
@@ -153,17 +161,36 @@ def audit(since=None):
         for r, pts, _ in report_points(reps, d):
             if len(pts) >= 2:
                 rp[r["id"]] = (r, pts)
-    out, matched = [], set()
-    for rid, (r, pts) in sorted(rp.items(), key=lambda kv: kv[1][1][0][0]):
+    gone = retracted(reps)
+    rp = {k: v for k, v in rp.items() if k not in gone}
+    judged, matched = {}, set()
+    for rid, (r, pts) in rp.items():
         if pts[-1][0] < start or pts[0][0] > newest:
             continue  # seen while the watcher wasn't searching
-        verdict, hits = judge(r, pts, cands, fate, newest, field)
-        matched |= {_stem(rec["alert"]) for _, rec in hits if rec and rec.get("alert")}
+        judged[rid] = judge(r, pts, cands, fate, newest, field)
+        matched |= {_stem(rec["alert"]) for _, rec in judged[rid][1] if rec and rec.get("alert")}
+    root = amended(rp)
+    best = {}
+    for rid, (verdict, _) in judged.items():
+        fam = root.get(rid, rid)
+        if fam not in best or RANK[verdict] < RANK[judged[best[fam]][0]]:
+            best[fam] = rid
+    out = []
+    for rid, (r, pts) in sorted(rp.items(), key=lambda kv: kv[1][1][0][0]):
+        if rid not in judged:
+            continue
+        verdict, hits = judged[rid]
+        by = best[root.get(rid, rid)]
+        lifted = RANK[judged[by][0]] < RANK[verdict]
+        if lifted:
+            verdict, hits = judged[by]
         if verdict is None or said.get(rid) == verdict:
             continue
         said[rid] = verdict
         detail = ", ".join(f"{k} {rec.get('decided_utc', '')[11:16]} {rec.get('note', '')}".strip()
                            for k, rec in hits if rec) or "nothing near its path"
+        if lifted:
+            detail = f"as {by}: {detail}"
         out.append(f"{verdict} {rid} {r['reporter']} {r['group']} {r['kind']}, "
                    f"points {pts[0][0]:%m-%d %H:%M}-{pts[-1][0]:%H:%M} "
                    f"at ({pts[0][1]:.0f},{pts[0][2]:.0f})->({pts[-1][1]:.0f},{pts[-1][2]:.0f}): {detail}")
