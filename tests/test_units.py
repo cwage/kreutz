@@ -1005,6 +1005,37 @@ def test_notify_holds_a_track_on_a_line_but_confirms_it_in_full(monkeypatch):
     assert live.line_score(None, 7, track[0]) is None  # can't measure: the page isn't held
 
 
+def _rep(rid, kind, posted, reporter="Eryk Banach", telescope="CCOR2"):
+    return {"id": rid, "kind": kind, "reporter": reporter, "telescope": telescope,
+            "posted_utc": posted, "group": "Kreutz", "points": []}
+
+
+def test_a_retraction_withdraws_the_reporters_latest_report_only():
+    reps = [_rep("a", "Potential Comet", "2026-10-22T07:00:00Z"),
+            _rep("b", "Potential Comet", "2026-10-22T08:36:02Z"),
+            _rep("x", "Retracting Report", "2026-10-22T08:48:42Z"),
+            _rep("c", "Potential Comet", "2026-10-22T08:40:00Z", reporter="Jiangao Ruan"),
+            _rep("d", "Potential Comet", "2026-10-22T08:40:00Z", telescope="CCOR1"),
+            _rep("e", "Potential Comet", "2026-10-22T09:00:00Z")]  # after the retraction
+    assert evaluate.retracted(reps) == {"b"}
+    assert evaluate.retracted([_rep("x", "Retracting Report", "2026-10-22T08:48:42Z")]) == set()
+
+
+def test_a_correction_joins_the_report_it_amends_by_its_path():
+    t = lambda h, m: datetime(2026, 10, 6, h, m)  # noqa: E731
+    orig = [(t(11, 45), 1700.0, 1650.0), (t(12, 0), 1692.0, 1643.0), (t(12, 15), 1684.0, 1636.0)]
+    corr = [(t(11, 45), 1688.0, 1640.0), (t(12, 0), 1680.0, 1633.0), (t(12, 15), 1672.0, 1626.0)]  # ~15 px off
+    more = [(t(13, 0), 1660.0, 1615.0), (t(13, 15), 1652.0, 1608.0)]  # the same path, later
+    other = [(t(12, 0), 1300.0, 1200.0), (t(12, 15), 1292.0, 1193.0)]  # another comet
+    rp = {"o": (_rep("o", "Potential Comet", "2026-10-06T13:02:00Z"), orig),
+          "c": (_rep("c", "Correction", "2026-10-06T13:02:22Z"), corr),
+          "m": (_rep("m", "Additional Observations", "2026-10-06T14:00:00Z"), more),
+          "z": (_rep("z", "Additional Observations", "2026-10-06T14:30:00Z"), other)}
+    assert evaluate.amended(rp) == {"c": "o", "m": "o"}  # z continues nothing
+    rp["k"] = (_rep("k", "Correction", "2026-10-06T13:10:00Z", reporter="Jiangao Ruan"), corr)
+    assert "k" not in evaluate.amended(rp)  # someone else's report isn't amended
+
+
 def test_notify_logs_why_a_candidate_was_held():
     from kreutz import notify
     d = {"track": [], "paged": False, "heading_deg": 7, "lane_px": 74}

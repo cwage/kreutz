@@ -217,6 +217,74 @@ def report_points(reports, day, inst=None):
     return out
 
 
+# Reporters amend their reports with new ones, and Sungrazer doesn't link
+# them: a Retracting Report (no points) withdraws the reporter's latest
+# report on that telescope, and a Correction or Additional Observations
+# carries the same comet's points, corrected or extended. Banach's CCOR-2
+# comet of 2026-10-06 was "missed" by its original points, ~15 px off,
+# and found by its correction's.
+AMEND_WITHIN = timedelta(days=1)
+AMEND_KINDS = ("Correction", "Additional Observations")
+AMEND_PX = 60.0  # an amendment's points within this of the earlier report's path, extrapolated
+
+
+def _posted(r):
+    return datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
+
+
+def _earlier(r, reps):
+    """The same reporter's reports on the same telescope posted up to
+    AMEND_WITHIN before r, latest first."""
+    t = _posted(r)
+    return sorted((q for q in reps if q is not r and q["reporter"] == r["reporter"]
+                   and q.get("telescope") == r.get("telescope")
+                   and timedelta(0) < t - _posted(q) <= AMEND_WITHIN),
+                  key=_posted, reverse=True)
+
+
+def retracted(reps):
+    """Ids of the reports their reporters withdrew: for each Retracting
+    Report, the latest earlier report from the same reporter on the same
+    telescope (not itself a retraction)."""
+    out = set()
+    for q in reps:
+        if q.get("kind") == "Retracting Report":
+            prior = [r for r in _earlier(q, reps) if r.get("kind") != "Retracting Report"]
+            if prior:
+                out.add(prior[0]["id"])
+    return out
+
+
+def _continues(pts, earlier):
+    """Do points [(time, x, y)] lie within AMEND_PX of the path through
+    `earlier` (2+ points), extrapolated in a straight line?"""
+    t0 = earlier[0][0]
+    tm = [(t - t0).total_seconds() for t, _, _ in earlier]
+    fx = np.polyfit(tm, [x for _, x, _ in earlier], 1)
+    fy = np.polyfit(tm, [y for _, _, y in earlier], 1)
+    d = [np.hypot(x - np.polyval(fx, (t - t0).total_seconds()), y - np.polyval(fy, (t - t0).total_seconds()))
+         for t, x, y in pts]
+    return float(np.median(d)) <= AMEND_PX
+
+
+def amended(rp):
+    """{report id: the id of the first report in its chain} for the
+    Corrections and Additional Observations in rp ({id: (report, points)})
+    that amend an earlier report there: the reporter's latest one on the
+    telescope within AMEND_WITHIN whose path the amendment's points
+    continue."""
+    reps = [r for r, _ in rp.values()]
+    root = {}
+    for r in sorted(reps, key=_posted):
+        if r.get("kind") not in AMEND_KINDS:
+            continue
+        for q in _earlier(r, reps):
+            if _continues(rp[r["id"]][1], rp[q["id"]][1]):
+                root[r["id"]] = root.get(q["id"], q["id"])
+                break
+    return root
+
+
 # How long before our first sighting another instrument's report of the
 # same comet can have been observed. LASCO C3 looks much farther out, so
 # it sees a Kreutz comet about a day before CCOR-1 does; CCOR-2 (at L1)

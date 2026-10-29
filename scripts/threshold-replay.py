@@ -13,7 +13,9 @@ single-frame line vetoes, which need the follow-up's frame-by-frame
 measurement; they only remove more, so the false counts here are an
 upper bound. Reported comets are the instrument's Kreutz reports with two
 or more points, matched by position (evaluate.matches or
-shortlist._known_by_position).
+shortlist._known_by_position), less those their reporters retracted,
+and counted once with the Corrections and Additional Observations that
+amend them (evaluate.amended): caught if any of them is.
 """
 
 import sys
@@ -24,7 +26,7 @@ import numpy as np
 
 warnings.simplefilter("ignore")
 
-from kreutz.evaluate import FRAME, load, report_points, tracks, matches  # noqa: E402
+from kreutz.evaluate import FRAME, amended, load, matches, report_points, retracted, tracks  # noqa: E402
 from kreutz.frames import BG_FRAMES, BG_SKIP, STAR_FRAMES, Sequence, frame_paths  # noqa: E402
 from kreutz.instrument import CURRENT as INSTRUMENT  # noqa: E402
 from kreutz.lane import field_or_none  # noqa: E402
@@ -42,13 +44,17 @@ def main(paths):
     by_time = {t: [c for c in cs if np.hypot(c["vx"], c["vy"]) >= LIVE_SPEED_MIN] for t, cs in by_time.items()}
     days = sorted({t.date() for t in by_time})
     reps = all_reports()
+    gone = retracted(reps)
     rp = {}
     for d in days:
         for r, pts, posted in report_points(reps, d):
-            if r.get("group") == "Kreutz" and len(pts) >= 2 and r.get("kind") != "Retracting Report":
+            if r.get("group") == "Kreutz" and len(pts) >= 2 and r["id"] not in gone:
                 rp[r["id"]] = (r, pts, posted)
     lo, hi = min(by_time), max(by_time)
     rp = {k: v for k, v in rp.items() if any(lo <= t <= hi for t, _, _ in v[1])}
+    root = amended({k: (r, pts) for k, (r, pts, _) in rp.items()})
+    comet = lambda rid: root.get(rid, rid)  # noqa: E731
+    comets = {comet(rid) for rid in rp}
     field = field_or_none((FRAME_ROWS, 2048))
     sun = INSTRUMENT.sun_xy
     seqs = {}
@@ -63,7 +69,7 @@ def main(paths):
         return seqs[d]
 
     print(f"{INSTRUMENT.label}: {len(by_time)} windows over {len(days)} days ({days[0]}..{days[-1]}), "
-          f"{len(rp)} Kreutz reports with points in the span")
+          f"{len(rp)} Kreutz reports with points in the span, {len(comets)} comets")
     caught_by = {}
     for thr in THRESHOLDS:
         fired = sorted(tracks(by_time, thr, LINK), key=lambda tr: tr[LINK - 1]["t"])
@@ -94,7 +100,7 @@ def main(paths):
         caught_by[thr] = caught
         n = len(days)
         print(f"threshold {thr}: {len(fired)} tracks fire; {vetoed} stack-line vetoed; "
-              f"reported comets caught {len(caught)}/{len(rp)}; "
+              f"reported comets caught {len({comet(rid) for rid in caught})}/{len(comets)}; "
               f"unexplained {false_pages} paged ({false_pages / n:.1f}/day) + {false_quiet} quiet")
         for t, rid, why in veto_real:
             print(f"   vetoed a reported comet: {t:%m-%d %H:%M} {rid} ({why})")
