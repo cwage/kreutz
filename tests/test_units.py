@@ -871,6 +871,36 @@ def test_line_stack_vetoes_a_stripe_but_not_a_moving_point():
     assert vet.line_stack(_stack_seq(stripe), 7, x8, y8, vx, vy).startswith("a line in its own stack")
 
 
+def test_through_line_scores_a_line_through_the_track_not_a_point_or_its_tail():
+    from kreutz import vet
+    rng = np.random.default_rng(5)
+    H, W = 200, 200
+    yy, xx = np.mgrid[0:H, 0:W]
+    vx, vy = -4.0, -4.0
+    x8, y8 = 100.0, 100.0
+    point, tailed, streak = [], [], []
+    for i in range(8):
+        k = i - 7
+        x, y = x8 + vx * k, y8 + vy * k
+        r, c = H - 1 - y, x
+        noise = rng.normal(0, 1, (H, W)).astype(np.float32)
+        blob = 4.0 * np.exp(-((yy - r) ** 2 + (xx - c) ** 2) / (2 * 1.5 ** 2))
+        point.append(noise + blob)
+        # a tail trailing the point by up to 40 px, against the motion
+        along = ((xx - c) * -1 + (yy - r) * -1) / np.sqrt(2)  # px behind the point
+        across = np.abs((xx - c) - (yy - r)) / np.sqrt(2)
+        tailed.append(noise + blob + ((along > 2) & (along < 40)) * np.exp(-across ** 2 / 4.0))
+        # the CCOR-2 streak: faint, broken, along the track's direction
+        d = np.abs((yy - (H - 1 - y8)) + (xx - x8)) / np.sqrt(2)
+        gaps = (((xx + yy) // 9) % 3 != 0)
+        streak.append(noise + 1.0 * gaps * np.exp(-d ** 2 / (2 * 1.5 ** 2)))
+    for maps in (point, tailed):
+        score, _ = vet.through_line(_stack_seq(maps), 7, x8, y8, vx, vy)
+        assert score < 0.5, score
+    score, angle = vet.through_line(_stack_seq(streak), 7, x8, y8, vx, vy)
+    assert score > 1.0 and angle in (0.0, 177.0, 3.0), (score, angle)
+
+
 def test_line_like_needs_more_than_one_frame_to_call_a_line():
     from kreutz import vet
     H, W = 120, 120
@@ -955,6 +985,24 @@ def test_orbit_gate_measures_the_track_and_fails_open(monkeypatch):
     monkeypatch.setattr(live, "orbit_of", fails)
     assert live.orbit_rms(track) is None  # a fit that can't run holds nothing
     assert live.ORBIT_GATE and live.OFF_ORBIT_RMS == 1000.0  # CCOR-1, the default instrument
+
+
+def test_notify_holds_a_track_on_a_line_but_confirms_it_in_full(monkeypatch):
+    from kreutz import notify
+    track = [{"time": "2026-10-28T14:45:14", "x": 1567.0, "y": 1592.0, "vx": -9.5, "vy": -8.0}]
+    d = {"track": track, "other_instruments": [], "paged": False, "heading_deg": 2,
+         "line_score": 3.37, "on_line": True}
+    assert notify.compose(d, "a.json") is None
+    assert notify.held_because(d) == "a line runs through it (3.37)"
+    title, lines, prio, _ = notify.compose(dict(d, kind="confirmed", frames=6, note="ok"), "a.confirmed.json")
+    assert prio == "urgent" and "a line ran through it as a candidate (3.37)" in lines[0]
+    monkeypatch.setattr(live, "through_line", lambda *a: (3.374, 0.0))
+    assert live.line_score(None, 7, track[0]) == 3.37
+
+    def fails(*a):
+        raise IndexError("frame missing")
+    monkeypatch.setattr(live, "through_line", fails)
+    assert live.line_score(None, 7, track[0]) is None  # can't measure: the page isn't held
 
 
 def test_notify_logs_why_a_candidate_was_held():

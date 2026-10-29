@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, label
+from scipy.ndimage import gaussian_filter, label, map_coordinates
 
 from .frames import (BG_FRAMES, BG_SKIP, CADENCE, PSF_SIGMA, STAR_FRAMES, SURROUND_SIGMA, Sequence,
                      frame_paths)
@@ -226,12 +226,11 @@ def extent(sig, r0, c0):
     return float(np.sqrt(12 * major)), float(np.sqrt(major / minor))
 
 
-def stack_shape(seq: Sequence, last: int, x, y, vx, vy, n=STACK_N, half=STACK_HALF):
-    """The track's stack through frame `last`: (peak within 3 px of the
-    track, axis ratio, length, area) of the component above STACK_SIGMA
-    that holds the peak, in a (2*half+1) square around the track's
-    position in frame `last`. The stack is divided by sqrt(frames), so it
-    reads in sigma like the search's score."""
+def track_stack(seq: Sequence, last: int, x, y, vx, vy, n=STACK_N, half=STACK_HALF):
+    """The last n significance maps through frame `last`, shifted along
+    the track and summed, in a (2*half+1) square around the track's
+    position in frame `last`, divided by sqrt(frames) so it reads in sigma
+    like the search's score; None when no frame's square fits."""
     H, W = seq.shape
     size = 2 * half + 1
     stack = np.zeros((size, size), np.float32)
@@ -243,9 +242,16 @@ def stack_shape(seq: Sequence, last: int, x, y, vx, vy, n=STACK_N, half=STACK_HA
             continue
         stack += np.nan_to_num(seq.significance(i)[r0 - half:r0 + half + 1, c0 - half:c0 + half + 1])
         frames += 1
-    if not frames:
+    return stack / np.sqrt(frames) if frames else None
+
+
+def stack_shape(seq: Sequence, last: int, x, y, vx, vy, n=STACK_N, half=STACK_HALF):
+    """The track's stack (track_stack): (peak within 3 px of the track,
+    axis ratio, length, area) of the component above STACK_SIGMA that
+    holds the peak."""
+    stack = track_stack(seq, last, x, y, vx, vy, n, half)
+    if stack is None:
         return 0.0, 1.0, 0.0, 0
-    stack /= np.sqrt(frames)
     win = stack[half - 3:half + 4, half - 3:half + 4]
     pr, pc = np.unravel_index(np.argmax(win), win.shape)
     pr, pc = pr + half - 3, pc + half - 3
@@ -267,6 +273,31 @@ def line_stack(seq: Sequence, last: int, x, y, vx, vy):
     if ratio >= STACK_LINE_RATIO and length >= STACK_LINE_LEN:
         return f"a line in its own stack: {length:.0f} px long, {ratio:.0f}:1"
     return None
+
+
+THROUGH_R0, THROUGH_R = 6, 45  # px from the track's position: the stretch of line looked at, either side
+
+
+def through_line(seq: Sequence, last: int, x, y, vx, vy):
+    """(score, angle) of the strongest straight line through the track's
+    position in its own stack: for each orientation, the mean of the stack
+    along it from THROUGH_R0 to THROUGH_R px out, on the weaker side; the
+    angle in degrees from the motion axis. A point scores about nothing,
+    and so does a comet's tail, which lies on one side only; a line
+    through the point scores its own brightness."""
+    stack = track_stack(seq, last, x, y, vx, vy, half=THROUGH_R + 2)
+    if stack is None:
+        return 0.0, 0.0
+    h = THROUGH_R + 2
+    motion = np.degrees(np.arctan2(-vy, vx))  # rows run down, report y up
+    r = np.arange(THROUGH_R0, THROUGH_R + 1, dtype=float)
+    best = (-np.inf, 0.0)
+    for off in range(0, 180, 3):
+        a = np.radians(motion + off)
+        sides = [float(map_coordinates(stack, [h + sgn * r * np.sin(a), h + sgn * r * np.cos(a)], order=1).mean())
+                 for sgn in (1, -1)]
+        best = max(best, (min(sides), float(off)))
+    return best
 
 
 def line_like(seq: Sequence, last: int, x, y, vx, vy):
