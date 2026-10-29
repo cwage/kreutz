@@ -467,6 +467,50 @@ def test_follow_up_rejects_what_does_not_lie_on_a_line(monkeypatch, tmp_path):
     assert keep == [] and logged[-1][0] == "rejected" and "stationary" in logged[-1][1]
 
 
+def test_occulted_r_is_where_the_valid_data_starts():
+    H, W = 600, 600
+    yy, xx = np.mgrid[0:H, 0:W]
+    r = np.hypot(yy - 300, xx - 290)
+    sig = np.where(r < 125, np.nan, 0.0)
+    sig[295:298, 200:280] = 6.6  # a row-constant stripe inside the occulter, as CCOR-1's
+    assert live.occulted_r(sig, (300, 290), 460) == 130.0
+    assert live.occulted_r(np.full((H, W), np.nan), (300, 290), 260) is None
+
+
+def test_follow_up_ends_behind_the_occulter_and_after_a_feed_gap(monkeypatch, tmp_path):
+    import types
+    t0 = datetime(2026, 10, 27, 10, 30, 25)
+    logged = []
+    monkeypatch.setattr(live, "log", lambda kind, track, decided, **extra: logged.append((kind, extra.get("note"))))
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [])
+    H, W = 1920, 2048
+    sig = np.zeros((H, W), np.float32)
+    yy, xx = np.mgrid[0:H, 0:W]
+    sig[np.hypot(yy - 962, xx - 1006) < 200] = np.nan
+    sun_rc = (962.0, 1006.0)  # report (1006, 957)
+
+    def seq_at(t):
+        return types.SimpleNamespace(times=[t - timedelta(minutes=15), t], shape=(H, W), sun_rc=lambda: sun_rc,
+                                     significance=lambda i: sig)
+
+    def comet(x, y, t, confirmed=True):
+        return {"alert": str(tmp_path / "x.json"), "track": [{"time": t.isoformat(), "x": x, "y": y, "vx": -9.0,
+                "vy": -4.0}], "others": [], "known": None, "points": [], "t": t, "x": x, "y": y,
+                "vx": -9.0, "vy": -4.0, "misses": 0, "confirmed": confirmed}
+    # due 213 px from the Sun next frame: inside 200 + OCCULTED_MARGIN, ended
+    assert live.follow_up(seq_at(t0 + timedelta(minutes=15)), 1, [comet(1210.0, 1040.0, t0)], None) == []
+    assert logged[-1] == ("ended", "behind the occulter")
+    # 384 px out and still in view: kept, a miss counted
+    keep = live.follow_up(seq_at(t0 + timedelta(minutes=15)), 1, [comet(1329.0, 1164.0, t0)], None)
+    assert keep and keep[0]["misses"] == 1
+    # the next frame 4.5 h later, after a gap in the feed: ended, not measured
+    assert live.follow_up(seq_at(t0 + timedelta(hours=4, minutes=30)), 1, [comet(1700.0, 1300.0, t0)], None) == []
+    assert logged[-1][0] == "ended" and "gap" in logged[-1][1]
+    # a candidate after an hour's gap: faded
+    assert live.follow_up(seq_at(t0 + timedelta(hours=1)), 1, [comet(1700.0, 1300.0, t0, False)], None) == []
+    assert logged[-1][0] == "faded" and "gap" in logged[-1][1]
+
+
 def test_flatten_takes_out_a_hot_column_and_leaves_noise_alone():
     rng = np.random.default_rng(3)
     s = rng.standard_normal((400, 300)).astype(np.float32)
