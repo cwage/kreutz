@@ -543,6 +543,36 @@ def where_lost(x, y, shape, sun):
     return "lost"
 
 
+OCCULTED_FILL = 0.8  # a ring around the Sun with less valid data than this is (partly) occulted
+OCCULTED_STEP = 10   # px: ring width
+OCCULTED_MARGIN = 20  # px outside the occulted disk where a follow-up stops: the maps' masked border
+
+
+def occulted_r(sig, sun_rc, limit):
+    """The radius (px) of the occulted disk in significance map `sig`: the
+    first ring out from the Sun (row, col), within `limit`, that's at
+    least OCCULTED_FILL valid; None when none is. 200 px on CCOR-1, 130
+    on CCOR-2, 120 on C2, 50 on C3 (2026-10-27/28). Inside it the maps
+    are mostly NaN, and what isn't is artifact: CCOR-1's row-constant
+    stripes at ~100 px, where the follow-up of the comet of 2026-10-26
+    took two points at 15:00 and 17:00 the next day, an hour after it had
+    gone behind the occulter."""
+    H, W = sig.shape
+    r0, c0 = sun_rc
+    lo, hi = int(max(0, r0 - limit)), int(min(H, r0 + limit + 1))
+    left, right = int(max(0, c0 - limit)), int(min(W, c0 + limit + 1))
+    yy, xx = np.mgrid[lo:hi, left:right]
+    r = np.hypot(yy - r0, xx - c0)
+    ok = np.isfinite(sig[lo:hi, left:right])
+    ring = (r // OCCULTED_STEP).astype(int)
+    n = np.bincount(ring.ravel())
+    good = np.bincount(ring.ravel(), weights=ok.ravel())
+    for k in range(int(limit // OCCULTED_STEP)):
+        if n[k] and good[k] / n[k] >= OCCULTED_FILL:
+            return float(k * OCCULTED_STEP)
+    return None
+
+
 def followed(c, t, pending):
     """Is candidate c at time t one of the objects already being followed?
     The follow-up knows where its comet is now, which the memory of where
@@ -596,13 +626,44 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
     frame showed.) An object is confirmed on a frame it was measured in.
     At the confirming frame the measured points are vetted (unlikely):
     what fails is logged as rejected and dropped, with no notification
-    and no render."""
+    and no render.
+    A follow-up also ends (or fades) without waiting out its misses when
+    it's due behind the occulter (within OCCULTED_MARGIN of occulted_r),
+    or when it hasn't been seen for longer than its misses allow, as
+    after a gap in the feed: frames that never came counted no misses,
+    and a prediction hours old found whatever was there."""
     keep = []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    try:
+        sun = seq.sun_rc()
+        sx, sy = sun[1], seq.shape[0] - 1 - sun[0]
+        occ = occulted_r(seq.significance(last), sun, R_MIN)
+    except Exception as e:  # a frame that can't be read mustn't stop the follow-up
+        print(f"occulter: {e}", file=sys.stderr)
+        occ = None
+
+    def drop(f, note=None):
+        if f.get("confirmed"):
+            log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]), known=f.get("known"),
+                where=where_lost(f["x"], f["y"], seq.shape, seq.sun_rc()), **({"note": note} if note else {}))
+            if render and not rendering(f):
+                start_render(f)  # the whole passage
+        else:
+            log("faded", seen(f), now, alert=f["alert"], **({"note": note} if note else {}))
+
     for f in pending:
         dt = (seq.times[last] - f["t"]) / FRAME
         if round(dt) < 1:
             keep.append(f)
+            continue
+        allowed = CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST
+        if round(dt) > allowed:
+            drop(f, f"not seen for {dt * FRAME.total_seconds() / 3600:.1f} h (a gap in the feed)")
+            continue
+        px, py = predicted(f, seq.times[last], dt)[:2] if f.get("confirmed") else \
+            (f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt)
+        if occ is not None and np.hypot(px - sx, py - sy) <= occ + OCCULTED_MARGIN:
+            drop(f, "behind the occulter")
             continue
         pts = measure(seq, last, f["x"] + f["vx"] * dt, f["y"] + f["vy"] * dt, f["vx"], f["vy"],
                       back=0, ahead=0, lost=0)
@@ -628,15 +689,10 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             continue
         if not pts:
             f["misses"] += 1
-            if f["misses"] < (CONFIRMED_LOST if f.get("confirmed") else CONFIRM_LOST):
+            if f["misses"] < allowed:
                 keep.append(f)
-            elif f.get("confirmed"):
-                log("ended", seen(f), now, alert=f["alert"], frames=len(f["points"]), known=f.get("known"),
-                    where=where_lost(f["x"], f["y"], seq.shape, seq.sun_rc()))
-                if render and not rendering(f):
-                    start_render(f)  # the whole passage
             else:
-                log("faded", seen(f), now, alert=f["alert"])
+                drop(f)
             continue
         f["misses"] = 0
         f["points"].append(pts[-1])
