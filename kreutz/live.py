@@ -1068,6 +1068,13 @@ def main():
                 print(f"{t:%Y-%m-%d %H:%M}: skipped ({e})", file=sys.stderr)
                 done.add(t)
                 checkpoint(t)
+                # say so on the status page too: a run of skipped windows
+                # (CCOR-2 missing two frames, 2026-10-29 15:45-17:30) left
+                # it looking like a stalled watcher
+                try:
+                    write_status(chains, pending, t, reps, waiting=f"skipped the {t:%H:%M} window: {e}")
+                except Exception as e2:
+                    print(f"status error: {e2}", file=sys.stderr)
                 continue
             cands = cfar(cands, args.threshold, t)
             if args.orbit_threshold is not None:
