@@ -1091,6 +1091,26 @@ def test_a_correction_joins_the_report_it_amends_by_its_path():
     assert "k" not in evaluate.amended(rp)  # someone else's report isn't amended
 
 
+def test_a_track_on_no_kreutz_orbit_is_matched_to_other_groups_reports(monkeypatch):
+    t0 = datetime(2026, 10, 28, 21, 45)
+    track = [{"t": t0 + timedelta(minutes=15 * k), "x": 1357.0 - 3.4 * k, "y": 527.0 - 3.4 * k} for k in range(4)]
+    pts = [(datetime(2026, 10, 28, 5, 30), 1350.0, 962.0), (datetime(2026, 10, 28, 6, 0), 1357.0, 945.0)]
+    marsden = {"id": "wb", "group": "Marsden", "posted_utc": "2026-10-28T06:44:39Z"}
+    fragment = {"id": "jr", "group": "Marsden", "posted_utc": "2026-10-28T12:47:44Z"}
+    kreutz = {"id": "cw", "group": "Kreutz", "posted_utc": "2026-10-28T12:00:00Z"}
+    monkeypatch.setattr(live, "orbit_of", lambda own: (None, 6480.0))  # no Kreutz orbit
+    tried = []
+
+    def rms(group, own, other, inst=None):
+        tried.append(group)
+        return 7.0 if other is pts else 829.0
+    monkeypatch.setattr(live, "family_rms", rms)
+    got = live.by_orbit(track, [(marsden, pts, None), (fragment, pts[:1] * 2, None), (kreutz, pts, None)])
+    assert got == [marsden] and "Kreutz" not in tried
+    monkeypatch.setattr(live, "family_rms", lambda *a, **k: float("inf"))
+    assert live.by_orbit(track, [(marsden, pts, None)]) is None  # nothing matched: position decides
+
+
 def test_notify_logs_why_a_candidate_was_held():
     from kreutz import notify
     d = {"track": [], "paged": False, "heading_deg": 7, "lane_px": 74}

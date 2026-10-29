@@ -128,7 +128,7 @@ from .frames import BG_FRAMES, BG_SKIP, CADENCE, L1B, SIG_CACHE, STAR_FRAMES, Se
 from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
-from .orbitsearch import SAME_RMS, SEP_PX as ORBIT_SEP_PX, joint_rms, orbit_of, orbit_search
+from .orbitsearch import FAMILIES, SAME_RMS, SEP_PX as ORBIT_SEP_PX, family_rms, joint_rms, orbit_of, orbit_search
 from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday, through_line
 
 FEED = INSTRUMENT.feed
@@ -283,14 +283,14 @@ OTHER_CCOR = [INSTRUMENTS[k] for k in ("ccor1", "ccor2") if ORBIT_MATCH and k !=
 def by_orbit(track, candidates, theirs=()):
     """The reports (with 2+ points) one family orbit fits together with
     the track, to SAME_RMS: ours, (report, points, posted), and the other
-    CCOR's, (report, points, instrument). None when the track itself has
-    no such orbit (too few points on frames on disk, or not a Kreutz path)
-    to test with."""
+    CCOR's, (report, points, instrument). A track on no Kreutz path is
+    tested against the other groups' reports instead (by_family). None
+    when nothing could be tested or matched that way."""
     own = [(c["t"], c["x"], c["y"]) for c in track]
     try:
         best = orbit_of(own)
         if best is None or best[1] > SAME_RMS:
-            return None
+            return by_family(own, candidates, theirs) or None
         # A report filed under another group (Non-Group, Meyer, ...) can't
         # be on a Kreutz orbit; fitting one anyway only wanders (John
         # Marrone's non-group CCOR-1 comet, 2026-10-26, drove the perihelion
@@ -301,6 +301,19 @@ def by_orbit(track, candidates, theirs=()):
     except Exception as e:  # a missing frame or a failed fit must not stop the watcher
         print(f"orbit match: {e}", file=sys.stderr)
         return None
+
+
+def by_family(own, candidates, theirs=()):
+    """For a track on no Kreutz orbit: the reports filed under another
+    sunskirting group (orbitsearch.FAMILIES) that one orbit of that group's
+    shape fits together with it, to SAME_RMS. A Marsden comet curves
+    around the Sun after perihelion, and position matching, which draws
+    straight lines, never tied the confirmed track of 2026-10-29 00:45 to
+    Boonplod's report of it: the status page listed a reported comet as
+    unreported."""
+    ok = lambda r, pts: len(pts) >= 2 and r.get("group") in FAMILIES  # noqa: E731
+    return ([r for r, pts, posted in candidates if ok(r, pts) and family_rms(r["group"], own, pts) < SAME_RMS]
+            + [r for r, pts, inst in theirs if ok(r, pts) and family_rms(r["group"], own, pts, inst) < SAME_RMS])
 
 
 def recheck(pending, t, reps):

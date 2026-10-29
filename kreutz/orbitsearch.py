@@ -207,6 +207,46 @@ def orbit_of(pts):
     return best
 
 
+# The other sunskirting groups Sungrazer files reports under, as rough
+# group means (q AU; i, node, peri deg, J2000 ecliptic): starting points
+# for family_rms, which frees all of them. A fit that wanders farther than
+# FAMILY_ANGLE from these, or out of FAMILY_Q, isn't that group's orbit.
+FAMILIES = {"Marsden": dict(q=0.047, i=26.6, node=79.5, peri=24.3),
+            "Kracht": dict(q=0.046, i=13.4, node=44.1, peri=58.9),
+            "Kracht2": dict(q=0.046, i=13.4, node=44.1, peri=58.9),
+            "Meyer": dict(q=0.036, i=72.5, node=73.4, peri=57.4)}
+FAMILY_ANGLE = 20.0
+FAMILY_Q = (0.02, 0.1)
+FAMILY_T_STARTS = (-48, -24, -12, -6, 0, 6, 12, 24)  # h from our first point
+
+
+def family_rms(group, pts, others, inst=None):
+    """The rms (arcsec) of the best orbit of `group`'s shape (FAMILIES, all
+    elements free) through our points and `others` (in `inst`'s
+    coordinates), each seen from its own instrument; inf when there's too
+    little to fit or nothing stays that group's orbit. The Marsden comet
+    of 2026-10-28, which curved through CCOR-1 after perihelion: our
+    track and Boonplod's report of it fit to 7", our track alone to 5",
+    our track and Ruan's fragment (another object) to 829"."""
+    fam = FAMILIES[group]
+    a, b = sky_points(pts), sky_points(others, inst)
+    ts, tx, ty = (x + y for x, y in zip(a, b))
+    if len(a[0]) < 2 or not b[0] or len(ts) < 4:
+        return float("inf")
+    where = [_where()] * len(a[0]) + [_where(inst)] * len(b[0])
+    best = float("inf")
+    for dT in FAMILY_T_STARTS:
+        e0 = orbit.Elements(T=min(ts) + timedelta(hours=dT), **fam)
+        try:
+            e, rms = orbit.fit(ts, tx, ty, e0, where, free=("T", "q", "i", "node", "peri"))
+        except Exception:  # a start the fit can't use; the others may
+            continue
+        off = max(abs((getattr(e, k) - fam[k] + 180) % 360 - 180) for k in ("i", "node", "peri"))
+        if off <= FAMILY_ANGLE and FAMILY_Q[0] <= e.q <= FAMILY_Q[1]:
+            best = min(best, rms)
+    return best
+
+
 def joint_rms(e, pts, others, inst=None):
     """The rms (arcsec) of one orbit, started from e with its perihelion
     time free, through our points and `others` (in `inst`'s coordinates,
