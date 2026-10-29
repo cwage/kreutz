@@ -71,7 +71,17 @@ the stray-light ghosts and satellites that the heading gate let through
 fit to 850" and worse, most to thousands. Not on CCOR-2, where Ruan's real comet of 2026-10-21 fit only
 to 513-597" and the recurring diagonal stray-light streak to 4", so the
 gate would cost a comet and stop nothing. A fit that can't run doesn't
-hold a page.
+hold a page. On CCOR-2 a pageworthy track is held instead when a
+straight line runs through it in its own stack (vet.through_line, over
+LINE_SCORE): the recurring stray-light streak there lies along the
+Kreutz lane and slides along itself, so it moves like a sungrazer, fits
+a Kreutz orbit, and its stack breaks into pieces too short for
+line_stack. Over every CCOR-2 alert of 2026-10-21..28 the comets that
+confirmed scored 0.11-0.24, the streak and striping alerts 1.2-5 (both
+false pages, 1.6 and 3.4). Not a veto: the streak runs along the lane,
+so a comet may cross it, and the follow-up goes on; a confirmation of
+a track held this way pages in full. Not on CCOR-1, whose noisier
+backgrounds put Collins' comet of 2026-10-20 at 2.0.
 --orbit-threshold T adds the orbit-constrained search (orbitsearch.py) to
 every window, at threshold T: candidates along Kreutz orbits, which it
 finds fainter and earlier than the full search and with fewer false
@@ -119,7 +129,7 @@ from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
 from .orbitsearch import SAME_RMS, SEP_PX as ORBIT_SEP_PX, joint_rms, orbit_of, orbit_search
-from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday
+from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday, through_line
 
 FEED = INSTRUMENT.feed
 POLL_S = 120
@@ -358,6 +368,8 @@ CONFIRM_LOST = 3  # consecutive frames without the object before a candidate is 
 PAGE_HEADING = 20  # deg off straight at the Sun: a candidate pointed farther off than this isn't paged
 ORBIT_GATE = INSTRUMENT.key == "ccor1"  # pages want a Kreutz orbit fit too (see the module notes)
 OFF_ORBIT_RMS = 1000.0  # arcsec: a track that fits no family orbit better than this isn't paged
+LINE_GATE = INSTRUMENT.key == "ccor2"  # pages want no line through the track either (module notes)
+LINE_SCORE = 1.0  # vet.through_line score (sigma) over which a track isn't paged
 CHAIN_PX = 8.0  # a search chain this close to a follow-up's prediction is the same object
 FOLLOWED_PX = 15.0  # and so is a new chain this close to a follow-up's prediction (+ FOLLOWED_GROW/frame)
 FOLLOWED_GROW = 1.0
@@ -424,6 +436,16 @@ def orbit_rms(track):
         print(f"orbit gate: {e}", file=sys.stderr)
         return None
     return None if best is None else round(best[1])
+
+
+def line_score(seq, last, c):
+    """vet.through_line's score for a candidate, rounded, or None when it
+    can't be measured: the gate then doesn't hold the page."""
+    try:
+        return round(through_line(seq, last, c["x"], c["y"], c["vx"], c["vy"])[0], 2)
+    except Exception as e:  # a missing frame must not stop the watcher, nor a page
+        print(f"line gate: {e}", file=sys.stderr)
+        return None
 
 
 def passage(f):
@@ -637,7 +659,8 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
                        "frames": len(f["points"]), "other_instruments": f["others"],
                        "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds"),
                        "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
-                       "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit")},
+                       "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
+                       "line_score": f.get("line_score"), "on_line": f.get("on_line")},
                       open(path, "w"), indent=1)
             log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
                 known=f.get("known"))
@@ -821,6 +844,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
             "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
             "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
+            "line_score": f.get("line_score"), "on_line": f.get("on_line"),
             "near_lane": f.get("near_lane"),  # files from before the heading gate
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
@@ -1088,13 +1112,16 @@ def main():
                     # the orbit search's own tracks are on a Kreutz orbit already
                     rms = orbit_rms(ch) if ORBIT_GATE and paged and not found_by else None
                     off_orbit = rms is not None and rms > OFF_ORBIT_RMS
-                    if held or off_orbit:
+                    line = line_score(seq, last, c) if LINE_GATE and paged and not held else None
+                    on_line = line is not None and line > LINE_SCORE
+                    if held or off_orbit or on_line:
                         paged = False
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
                          "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged,
-                         "found_by": found_by, "orbit_rms": rms, "off_orbit": off_orbit},
+                         "found_by": found_by, "orbit_rms": rms, "off_orbit": off_orbit,
+                         "line_score": line, "on_line": on_line},
                         indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
@@ -1110,6 +1137,7 @@ def main():
                         remember(c, f"alert: {stem.name}")
                         quiet = None if paged else "found by the orbit search only, not paged" if held \
                             else f"fits no Kreutz orbit ({rms}\"), not paged" if off_orbit \
+                            else f"a line runs through it ({line:.1f}), not paged" if on_line \
                             else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                         log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
                             reports_checked=reps is not None, others=others, lane_px=px,
@@ -1124,7 +1152,7 @@ def main():
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
                                     "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px,
                                     "heading_deg": round(off), "paged": paged, "found_by": found_by,
-                                    "orbit_rms": rms, "off_orbit": off_orbit,
+                                    "orbit_rms": rms, "off_orbit": off_orbit, "line_score": line, "on_line": on_line,
                                     "decided_utc": now_utc.isoformat(timespec="seconds")})
                     if args.notify:
                         try:

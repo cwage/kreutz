@@ -15,15 +15,19 @@ A comet somebody has already reported (the file's "known") gets a single
 low-priority message when it's confirmed, and nothing at the candidate
 stage. Nor does a candidate that doesn't move like a sungrazer (the
 file's "paged" false: pointed more than live.PAGE_HEADING off the Sun, or
-slower than the instrument's page_speed, or on CCOR-1 fitting no Kreutz
-orbit, "off_orbit"; older files say "near_lane"): the watcher keeps
+slower than the instrument's page_speed, on CCOR-1 fitting no Kreutz
+orbit, "off_orbit", or on CCOR-2 with a line through it, "on_line"; older
+files say "near_lane"): the watcher keeps
 following it, and if it's confirmed it gets one low-priority message
 saying why it wasn't paged. Such confirmations had paged urgently, and
 the ones that came were all non-Kreutz movers (the Marsden comet receding,
 94 deg off sunward, 2026-10-29 01:23). A track only the orbit search
 found ("found_by": "orbit", live.py --orbit-threshold) is held back the
 same way unless the watcher runs with --orbit-pages, but it's on a Kreutz
-orbit by construction, so its confirmation pages in full.
+orbit by construction, so its confirmation pages in full. So does one
+held for a line through it: it moved like a sungrazer, and the CCOR-2
+streak that the line gate holds has never lasted to confirmation, while
+a comet crossing it would.
 """
 
 import json
@@ -72,12 +76,14 @@ def compose(d, name):
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
     if far and d.get("found_by") == "orbit":
         hint += "; found by the orbit search only"
+    elif far and d.get("on_line"):
+        hint += f"; a line ran through it as a candidate ({d['line_score']})"
     elif far and d.get("off_orbit"):
         hint += f"; fits no Kreutz orbit ({d['orbit_rms']}\")"
     elif far:
         hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d
                  else f"; {d['lane_px']} px off the Kreutz lane")
-    if confirmed and far and d.get("found_by") != "orbit":
+    if confirmed and far and d.get("found_by") != "orbit" and not d.get("on_line"):
         return (f"{who}: confirmed, unlikely Kreutz",
                 [f"Held {d['frames']} frames, {d['note']}; {hint}. Wasn't paged as a candidate.",
                  "Measure it anyway:", cmd], "low", "comet")
@@ -100,6 +106,8 @@ def held_because(d):
         return "known comet"
     if d.get("found_by") == "orbit":
         return "found by the orbit search only"
+    if d.get("on_line"):
+        return f"a line runs through it ({d['line_score']})"
     if d.get("off_orbit"):
         return f"fits no Kreutz orbit ({d['orbit_rms']}\")"
     if "heading_deg" in d:
