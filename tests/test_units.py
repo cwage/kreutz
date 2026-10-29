@@ -347,6 +347,7 @@ def test_reported_by_extrapolates_along_the_report():
              {"time": "2026-10-10T18:00:25", "x": 1520.0, "y": 1113.0, "vx": -10.0, "vy": -2.5}]
     k = live.reported_by(chain, datetime(2026, 10, 10, 18, 0, 25), reps)
     assert k and k["id"] == "report_jr_20261010062348" and k["how"] == "position"
+    assert k["group"] == "Kreutz"  # the status page names any other group
     # additional observations of it, posted later, don't displace the discovery
     more = dict(reps[0], id="report_jr_20261010100000", kind="Additional Observations",
                 posted_utc="2026-10-10T14:00:00Z", points=[["1230", 1736.0, 1171.0], ["1300", 1717.0, 1166.0]])

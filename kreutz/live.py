@@ -258,7 +258,7 @@ def reported_by(track, t, reps):
     if not fits:
         return None
     r, how = min(fits, key=lambda f: f[0]["posted_utc"])
-    return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} | {"how": how}
+    return {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind", "group")} | {"how": how}
 
 
 # A straight line from a report's points is a loose test. It can't reach
@@ -896,8 +896,8 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
         if not known or not known.get("id"):
             return known
         r = by_id.get(known["id"])
-        if r and not known.get("posted_utc"):
-            known = {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind")} \
+        if r and not (known.get("posted_utc") and known.get("group")):  # group: records from before it was kept
+            known = {k: r.get(k) for k in ("reporter", "id", "telescope", "posted_utc", "kind", "group")} \
                 | {k: v for k, v in known.items() if v is not None}
         return dict(known, url=report_url(known["id"]))
 

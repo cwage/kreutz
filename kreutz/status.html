@@ -94,7 +94,10 @@ const reportBadge = (k, inst) => {
   if (!k) return `<span class="badge candidate">UNREPORTED</span>`;
   const when = k.posted_utc ? ` ${hhmm(k.posted_utc)}` : '';
   if (reportedHere(k)) {
-    return `<span class="badge known">${link(k, `reported by ${esc(k.reporter || k.id)}${when}${k.telescope ? ` (${esc(k.telescope)})` : ''}`)}</span>`;
+    // a comet of another group (Marsden, Kracht, ...) says so: on a page of
+    // Kreutz hunting it read like one (2026-10-29, Boonplod's Marsden comet)
+    const what = [k.telescope, k.group && k.group !== 'Kreutz' ? `${k.group} group` : null].filter(Boolean).map(esc).join(', ');
+    return `<span class="badge known">${link(k, `reported by ${esc(k.reporter || k.id)}${when}${what ? ` (${what})` : ''}`)}</span>`;
   }
   const here = inst ? ` in ${esc(inst.label)}` : '';
   const hint = `maybe ${esc(k.reporter)}'s ${esc(k.telescope || 'other-instrument')} comet,${when} (same time, not by position)`;
