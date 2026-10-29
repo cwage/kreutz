@@ -188,6 +188,46 @@ def swpc_canvas_to_report(t, x, y):
     return float(col), float(h["NAXIS2"] - 1 - row)
 
 
+# One reporter measures LASCO on the level 0.5 frame as it comes, rolled
+# by SOHO's CROTA1, where everyone else (and lasco.load) has it turned
+# solar north up. His points are ours turned by the roll about the Sun:
+# on his three C2 comets of 2026-10-24/25, -4.62 to -4.76 deg against a
+# CROTA1 of -4.77, and turned back they lie 0.8-1.4 px (median) from our
+# tracks, where they had read ~45 px off. Converting needs a frame near
+# the report time for its roll; without one the point is skipped.
+LASCO_ROLLED_REPORTERS = {"Chuck Fields"}
+ROLL_NEAR = timedelta(hours=1)
+_ROLL = {}
+
+
+def _roll_at(t):
+    """(CROTA1, Sun x, Sun y in report coords) from the frame nearest t
+    within ROLL_NEAR, or None."""
+    from .frames import frame_paths, frame_time
+    paths = frame_paths(t - ROLL_NEAR, t + ROLL_NEAR)
+    if not paths:
+        return None
+    path = min(paths, key=lambda p: abs(frame_time(p) - t))
+    if path not in _ROLL:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            h = fits.getheader(path, 0)
+        _ROLL[path] = (h["CROTA1"], h["CRPIX1"] - 1, h["NAXIS2"] - 1 - (h["CRPIX2"] - 1))
+    return _ROLL[path]
+
+
+def lasco_rolled_to_report(t, x, y):
+    """A point measured on the rolled level 0.5 LASCO frame at time t ->
+    report coordinates in our north-up frame, or None without a frame."""
+    roll = _roll_at(t)
+    if roll is None:
+        return None
+    crota, sx, sy = roll
+    th = np.radians(-crota)
+    dx, dy = x - sx, y - sy
+    return float(sx + dx * np.cos(th) - dy * np.sin(th)), float(sy + dx * np.sin(th) + dy * np.cos(th))
+
+
 def report_points(reports, day, inst=None):
     """(report, [(time, x, y)]) for reports with points on or around `day`,
     in L1b report coordinates (see swpc_canvas_to_report), from our
@@ -208,6 +248,11 @@ def report_points(reports, day, inst=None):
                 t -= timedelta(days=1)
             if INSTRUMENT.swpc_canvas and r.get("reporter") in SWPC_CANVAS_REPORTERS:
                 xy = swpc_canvas_to_report(t.replace(second=INSTRUMENT.second), x, y)
+                if xy is None:
+                    continue
+                x, y = xy
+            elif INSTRUMENT.source == "lasco" and inst is INSTRUMENT and r.get("reporter") in LASCO_ROLLED_REPORTERS:
+                xy = lasco_rolled_to_report(t, x, y)
                 if xy is None:
                     continue
                 x, y = xy
