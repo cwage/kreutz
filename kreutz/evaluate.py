@@ -28,6 +28,7 @@ from astropy.io import fits
 
 from . import DATA
 from .instrument import CURRENT as INSTRUMENT
+from .reports import telescope_of
 from .search import MAX_MISSING
 
 FRAME = INSTRUMENT.cadence
@@ -278,11 +279,11 @@ def _posted(r):
 
 
 def _earlier(r, reps):
-    """The same reporter's reports on the same telescope posted up to
-    AMEND_WITHIN before r, latest first."""
-    t = _posted(r)
+    """The same reporter's reports on the same telescope (any, when r names
+    none) posted up to AMEND_WITHIN before r, latest first."""
+    t, scope = _posted(r), telescope_of(r)
     return sorted((q for q in reps if q is not r and q["reporter"] == r["reporter"]
-                   and q.get("telescope") == r.get("telescope")
+                   and (scope is None or telescope_of(q) == scope)
                    and timedelta(0) < t - _posted(q) <= AMEND_WITHIN),
                   key=_posted, reverse=True)
 
@@ -290,7 +291,8 @@ def _earlier(r, reps):
 def retracted(reps):
     """Ids of the reports their reporters withdrew: for each Retracting
     Report, the latest earlier report from the same reporter on the same
-    telescope (not itself a retraction)."""
+    telescope, or on any when the retraction names none (most don't), not
+    itself a retraction."""
     out = set()
     for q in reps:
         if q.get("kind") == "Retracting Report":
