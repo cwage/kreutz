@@ -15,7 +15,7 @@ report's mean velocity (first point to last), and no score. Coarser than
 search tracks (a report is a few points over an hour), but it needs no
 frames, so it's how a new instrument gets its first lane; the lane search
 those samples enable then finds the comets whose tracks replace them.
-Reports their reporter retracted within a day are left out, and so are
+Reports their reporter retracted (evaluate.retracted) are left out, and so are
 reports that can't be a Kreutz comet coming in: faster than the search's
 SPEED_MAX or slower than its SPEED_MIN (a mistyped time or position: C2's
 fastest 1% claim 31-134 px/frame), heading more than SUNWARD_MAX off
@@ -28,11 +28,10 @@ straight at the Sun (2nd-98th percentile of C2 and C3 reports: within
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta
 
 import numpy as np
 
-from .evaluate import FRAME, load, tracks
+from .evaluate import FRAME, load, retracted, tracks
 from .frames import INSTRUMENT
 from .lane import field_or_none
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position, all_reports, report_tracks
@@ -58,16 +57,7 @@ def samples(runs, threshold, link, min_score):
     return sorted(out, key=lambda s: s[5])
 
 
-RETRACT_WITHIN = timedelta(days=1)
 SUNWARD_MAX = 60.0
-
-
-def retracted(r, reps):
-    """Did the reporter post a retraction on this telescope within a day after r?"""
-    t = datetime.fromisoformat(r["posted"])
-    return any(q.get("kind") == "Retracting Report" and q["reporter"] == r["reporter"]
-               and q.get("telescope") == r.get("telescope")
-               and timedelta(0) <= datetime.fromisoformat(q["posted"]) - t <= RETRACT_WITHIN for q in reps)
 
 
 def from_reports():
@@ -77,10 +67,10 @@ def from_reports():
     from .search import R_MIN, SPEED_MAX, SPEED_MIN
     sx, sy = INSTRUMENT.sun_xy
     reps = all_reports()
-    mine = [q for q in reps if q.get("telescope") == INSTRUMENT.telescope]
+    gone = retracted(reps)
     out, n = [], 0
     for r, pts in report_tracks(sorted({date.fromisoformat(r["date"]) for r in reps if r.get("date")}), reps):
-        if r.get("group") != "Kreutz" or retracted(r, mine):
+        if r.get("group") != "Kreutz" or r["id"] in gone:
             continue
         (t0, x0, y0), (t1, x1, y1) = pts[0], pts[-1]
         k = (t1 - t0) / FRAME

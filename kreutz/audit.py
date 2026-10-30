@@ -24,7 +24,8 @@ to the report. A verdict line is printed when one is new or has changed:
 and, once each, every alert that faded or was rejected with no report
 matched to it (FALSE?), to look at by eye.
 
-A report its reporter retracted gets no verdict, and a report and the
+A report its reporter retracted gets no verdict (one given before the
+retraction is dropped, with a RETRACTED line), and a report and the
 Corrections and Additional Observations that amend it
 (evaluate.amended) share the best verdict among them, "as" the one that
 earned it: the comet was caught if any of its reports' points were.
@@ -175,7 +176,7 @@ def audit(since=None):
         fam = root.get(rid, rid)
         if fam not in best or RANK[verdict] < RANK[judged[best[fam]][0]]:
             best[fam] = rid
-    out = []
+    out = [f"RETRACTED {rid}: withdrawn by its reporter, was {said.pop(rid)}" for rid in sorted(gone & set(said))]
     for rid, (r, pts) in sorted(rp.items(), key=lambda kv: kv[1][1][0][0]):
         if rid not in judged:
             continue

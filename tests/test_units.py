@@ -1077,6 +1077,28 @@ def test_a_retraction_withdraws_the_reporters_latest_report_only():
     assert evaluate.retracted([_rep("x", "Retracting Report", "2026-10-22T08:48:42Z")]) == set()
 
 
+def test_a_retraction_naming_no_telescope_withdraws_the_reporters_latest_on_any():
+    # report_jr_20261030112229: "Retracting Report", no group, no telescope
+    reps = [_rep("a", "Potential Comet", "2026-10-30T14:00:00Z", telescope="C2"),
+            _rep("b", "Potential Comet", "2026-10-30T15:09:12Z", telescope="CCOR1"),
+            _rep("x", "Retracting Report", "2026-10-30T15:22:29Z", telescope=None)]
+    reps[2]["group"] = None
+    assert evaluate.retracted(reps) == {"b"}
+    # cached by the old parse: the telescope read as the group
+    reps[2]["group"] = "C2"
+    assert evaluate.retracted(reps) == {"a"}
+
+
+def test_a_report_without_a_group_keeps_its_telescope():
+    lines = ["report_jr_20261030112229", "Jiangao Ruan", "2026-10-30", "Retracting Report", "C2",
+             "report_jr_20261030110912", "Jiangao Ruan", "2026-10-30", "Potential Comet", "Kreutz", "CCOR1",
+             "14:15 1436 1289", "14:30 1427 1284"]
+    r, q = reports.parse(lines)
+    assert (r["group"], r["telescope"]) == (None, "C2")
+    assert (q["group"], q["telescope"]) == ("Kreutz", "CCOR1")
+    assert q["points"] == [["1415", 1436.0, 1289.0], ["1430", 1427.0, 1284.0]]
+
+
 def test_a_correction_joins_the_report_it_amends_by_its_path():
     t = lambda h, m: datetime(2026, 10, 6, h, m)  # noqa: E731
     orig = [(t(11, 45), 1700.0, 1650.0), (t(12, 0), 1692.0, 1643.0), (t(12, 15), 1684.0, 1636.0)]

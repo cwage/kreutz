@@ -36,8 +36,19 @@ POLITE_S = 1.0
 
 EASTERN = ZoneInfo("America/New_York")
 
+TELESCOPES = ("C2", "C3", "CCOR1", "CCOR2")
 _ID = re.compile(r"^report_[a-z]+_(\d{14})$")
 _POINT = re.compile(r"^(\d{1,2}):?(\d{2})\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$")
+
+
+def telescope_of(r):
+    """A report's telescope, or None for one that names none (most
+    retractions). A report with no group (a retraction) had its telescope
+    read as the group by parses before that was fixed; the cached
+    data/reports files still have it there."""
+    if r.get("telescope") in TELESCOPES:
+        return r["telescope"]
+    return r.get("group") if r.get("group") in TELESCOPES else None
 
 
 def report_url(report_id):
@@ -92,6 +103,8 @@ def parse(lines):
         r.pop("done", None)
         r.pop("in_endorsements", None)
         r.update(reporter=f[0], date=f[1], kind=f[2], group=f[3], telescope=f[4])
+        if f[3] in TELESCOPES and f[4] not in TELESCOPES:  # no group: a retraction's fields stop at the telescope
+            r.update(group=None, telescope=f[3])
         out.append(r)
     return out
 
