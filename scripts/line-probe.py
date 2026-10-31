@@ -2,7 +2,7 @@
 (vet.through_line): the CCOR-2 stray-light streak that lies along the
 Kreutz lane, slides along itself, and gets tracked as a point.
 
-    docker compose run --rm -T -e KREUTZ_INSTRUMENT=ccor2 -w /srv -e PYTHONPATH=/srv --entrypoint python kreutz scripts/cross-line-probe.py [ALERT_NAME ...]
+    docker compose run --rm -T -e KREUTZ_INSTRUMENT=ccor2 -w /srv -e PYTHONPATH=/srv --entrypoint python kreutz scripts/line-probe.py [ALERT_NAME ...]
 
 With no names, every alert of the instrument. Prints, per alert, the
 best line score (the weaker side's mean significance along a line

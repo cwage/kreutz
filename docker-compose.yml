@@ -2,7 +2,7 @@ services:
   kreutz:
     build: .
     # Run as the host user so files written to the bind mount aren't
-    # root-owned (this host runs rootful docker).
+    # root-owned under rootful docker.
     user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./data:/data
@@ -14,7 +14,7 @@ services:
     # instead of all of them fanning out across every core.
     cpus: ${KREUTZ_CPUS:-1.5}
     environment:
-      # Which coronagraph: ccor1 (default) or ccor2. See kreutz/instrument.py.
+      # Which coronagraph: ccor1 (default), ccor2, c2 or c3. See kreutz/instrument.py.
       KREUTZ_INSTRUMENT: ${KREUTZ_INSTRUMENT:-ccor1}
       # For kreutz.notify (the live watcher's --notify): where alerts go.
       NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
