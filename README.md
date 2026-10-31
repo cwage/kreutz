@@ -39,6 +39,15 @@ field along one lane, so a flow field built from observed tracks gives the
 expected velocity at each pixel, and the stack can follow the comet's
 acceleration over 16 frames.
 
+`kreutz/orbitsearch.py` goes a step further on the CCOR instruments. Every
+Kreutz comet is on nearly the same orbit, so the trials are orbits: a small
+family of node values, and every perihelion time that puts the comet in
+the frame, each projected through the frame's WCS. That is a few hundred
+thousand trials against the full search's 760 million, and the predicted
+path curves and speeds up with the comet, so long windows don't smear.
+`kreutz.run --orbit` runs it over the archive; the watcher adds it to
+every window with `--orbit-threshold`.
+
 Coordinates throughout are Sungrazer report coordinates (x right, y down from
 the top of the displayed image, pixels per 15-minute frame) so results compare
 directly with reports. The Sun's center comes from each frame's WCS, at
@@ -49,7 +58,9 @@ and is not the Sun.
 
 Everything runs in Docker. `data/` is bind-mounted into the container as
 `/data` and holds frames, reports, run output and vetting images; it is not
-checked in. Frames are about 880 MB per day.
+checked in. Frames are about 880 MB per day. The optional settings (an
+ntfy topic for pages, the CPU cap, the web port) go in `.env`; copy
+`.env.example` and fill in what you use.
 
 ```
 docker compose build
@@ -94,7 +105,7 @@ masks the wide ones (15 px and more) that a median fill can't reach.
 KREUTZ_INSTRUMENT=ccor2 docker compose run --rm -d kreutz kreutz.sync --loop
 ```
 
-### LASCO C2 and C3 (in progress, #53)
+### LASCO C2 and C3 (in progress, issue #53)
 
 `KREUTZ_INSTRUMENT=c2` (or `c3`) works on SOHO's LASCO coronagraphs.
 Their level 0.5 frames come from NASA (`kreutz/lasco.py`): the last ~10
@@ -142,7 +153,7 @@ Modules, each with usage in its docstring:
 |---|---|
 | `kreutz.fetch` | download archived frames from NCEI |
 | `kreutz.reports` | scrape Sungrazer reports into `data/reports/` |
-| `kreutz.run` | search every window in a span; `--lane` for the lane search |
+| `kreutz.run` | search every window in a span; `--lane` for the lane search, `--orbit` for the orbit search |
 | `kreutz.evaluate` | score a run against reports: what would have been found, and how early |
 | `kreutz.shortlist` | archive run to a persistence-ranked list of unexplained tracks |
 | `kreutz.look` | strip of crops along a hypothesized track, for vetting by eye |
@@ -158,6 +169,20 @@ Modules, each with usage in its docstring:
 | `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html`, and `data/mark.html`, a frame player for circling things in a render (`mark.html?dir=render-ccor2/<name>/style-soft/field`) |
 | `kreutz.sync` | pull everything on the instrument's real-time feed to disk, beyond the hours the watcher needs (`--loop` to keep up) |
 | `kreutz.lanesamples` | lane samples for `lane.py` from archive runs: the windows of tracks matching the instrument's Kreutz reports |
+
+The rest of the package is what those import:
+
+| module | what it does |
+|---|---|
+| `kreutz.instrument` | everything that depends on which coronagraph: directories, feeds, sector, lane file, masks |
+| `kreutz.frames` | frames as background-subtracted, star-subtracted significance maps; the coordinate conventions |
+| `kreutz.search` | the full shift-and-stack search over every velocity |
+| `kreutz.lane` | the Kreutz flow field and the lane-constrained search |
+| `kreutz.orbit`, `kreutz.orbitsearch` | where a Kreutz orbit puts a comet in a frame, fitting one to a track, and the orbit-constrained search |
+| `kreutz.vet` | second look at a fired track in the raw frames: star, stationary, ghost, line |
+| `kreutz.persist` | archive only: does a track keep going in the frames after it fired? |
+| `kreutz.lasco` | LASCO frame listing, download and loading |
+| `kreutz/status.html`, `kreutz/mark.html` | the status page and the frame player that `kreutz.page` installs into `data/` |
 
 ### Pictures
 
@@ -181,7 +206,7 @@ starting points to copy, not the project's opinion.
 ### Live
 
 ```
-docker compose run --rm -d kreutz kreutz.live --n 8 --threshold 6.0 --notify "python -m kreutz.notify" --render
+docker compose run --rm -d kreutz kreutz.live --n 8 --threshold 6.0 --orbit-threshold 6.0 --notify "python -m kreutz.notify" --render
 ```
 
 polls NOAA's real-time feed, searches each new window, and when a track
@@ -201,7 +226,19 @@ it's still written, followed, pictured and shown on the status page as
 page scatter out to 90 degrees, and the satellite glint of 2026-10-21 was
 24 off. (A gate on distance to the archived Kreutz tracks came first, and
 the stream outgrew it: Ruan's comet of 2026-10-21 ran 273 px from the
-nearest track and its first page was held back.) A frame where only the
+nearest track and its first page was held back.) Two more holds are per
+instrument: on CCOR-1 a page is held when the track fits no Kreutz family
+orbit, and on CCOR-2 when a straight line runs through the track in its
+own stack, which is how its recurring stray-light streak looks (it lies
+along the lane and slides along itself, so it moves like a sungrazer).
+A held track is followed like any other, and its confirmation pages in
+full.
+With `--orbit-threshold T` the orbit-constrained search runs on every
+window too, at threshold T; its candidates join the full search's and
+are linked, vetted and followed with them. A track made only of orbit
+candidates is marked `"found_by": "orbit"` in its files and, unless
+`--orbit-pages` is given, isn't paged until it's confirmed.
+A frame where only the
 search's stacked chain holds an object, and nothing is measured, keeps
 the follow-up alive but counts toward neither confirmation nor the report
 block; an object is confirmed on a frame it was measured in. With
@@ -256,12 +293,16 @@ A CCOR-1 report claims a track that passes through its points, or along
 their path extrapolated for up to 12 h either way, so a morning report
 still claims the comet's track in the evening; a followed object is
 re-matched against the latest reports every window, since the report of
-a comet we're following usually arrives hours after our alert. Kreutz
-reports from other coronagraphs can't be matched by position; a lane
-track while one of them has a Kreutz comet in view counts as that comet,
-where "in view" allows a day before our first sighting for LASCO C3,
-which looks much farther out, and six hours for CCOR-2 and C2, which see
-roughly what CCOR-1 sees when it sees it. The search stacks frames and
+a comet we're following usually arrives hours after our alert. On the
+CCOR instruments a report from either of them is also matched by orbit:
+one Kreutz orbit that fits the report's points and the track together
+(`kreutz.orbitsearch.joint_rms`), which is how a comet first reported
+from the other coronagraph is recognised. A track that fits no Kreutz
+orbit is tried against the reports filed under the Marsden, Kracht and
+Meyer groups the same way. LASCO's reports can't be matched by position
+or orbit; a lane track while LASCO has a Kreutz comet in view counts as
+that comet, where "in view" allows a day before our first sighting for
+C3, which looks much farther out, and six hours for C2. The search stacks frames and
 so holds a comet too faint for the follow-up's single-frame measurement;
 a frame where the search still chains a followed object counts as seen,
 and a chain that sits where a follow-up predicts its object is not
@@ -285,7 +326,24 @@ searched are skipped, so it can be rerun.
 
 `scripts/` also has the wrappers for longer jobs: `day.sh` (one day in three
 parallel chunks), `archive.sh` and `archive-gpu.sh` (a span of days),
-`lane.sh`, `benchmark.sh` (the July 2025 week below) and `stop.sh`.
+`lane.sh`, `benchmark.sh` (the July 2025 week below), `lane-honest.sh`
+(the lane search with a lane built only from the reports before each
+test day) and `stop.sh`.
+
+The Python scripts in `scripts/` are diagnostics that import the package.
+Each has its usage in its docstring; they run in a one-off container with
+the scripts directory mounted:
+
+```
+docker compose run --rm -T -w /srv -e PYTHONPATH=/srv -v $PWD/scripts:/srv/scripts:ro --entrypoint python kreutz scripts/report-stack.py report_xx_20261024182048
+```
+
+- `threshold-replay.py`: replay archive runs through the watcher's alert rules at several thresholds, for how many pages a threshold costs
+- `report-stack.py`, `orbit-miss.py`, `faint-probe.py`: is a reported comet in our significance maps at all, and if not, which processing step loses it
+- `orbit-stack.py`, `faint-orbit-tie.py`: is a faint track real, and is it the same comet as a report
+- `orbit-family.py`: fit orbits to rendered tracks, which is where `orbitsearch.py`'s family comes from
+- `render-report.py`: render along a report's own points, for a comet too faint for `kreutz.render` to follow
+- `line-probe.py`: score alerts for CCOR-2's stray-light streak
 
 Containers are CPU-capped (`KREUTZ_CPUS`, default 1.5) with single-threaded
 numeric libraries, so several can run side by side at a predictable load. The
@@ -311,7 +369,7 @@ be made by the person who found and measured the object.
 ## Tests
 
 `scripts/test.sh` runs lint and the unit tests in the container; CI runs
-the same on every push. Those cover the bookkeeping (coordinates, window
+the same on every push, plus an import of every module. Those cover the bookkeeping (coordinates, window
 and linking rules, report parsing and conversion) on synthetic inputs. The
 detector itself is tested by the July 2025 benchmark, `scripts/benchmark.sh`,
 run by hand whenever it changes, and that's where the numbers above come

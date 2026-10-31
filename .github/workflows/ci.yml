@@ -14,5 +14,5 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: pyflakes kreutz tests
       - run: bash -n scripts/*.sh
-      - run: python -c "import kreutz.frames, kreutz.search, kreutz.lane, kreutz.evaluate, kreutz.shortlist, kreutz.weekly, kreutz.live, kreutz.render, kreutz.style, kreutz.notify, kreutz.score, kreutz.report"
+      - run: python -c "import importlib, pkgutil, kreutz; [importlib.import_module('kreutz.' + m.name) for m in pkgutil.iter_modules(kreutz.__path__)]"
       - run: pytest -q
