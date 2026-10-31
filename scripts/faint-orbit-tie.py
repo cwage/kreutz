@@ -12,6 +12,7 @@ report-orbit's predicted (x, y) at each --predict time.
 """
 
 import argparse
+import sys
 import warnings
 from datetime import datetime
 
@@ -37,7 +38,11 @@ def main():
     args = ap.parse_args()
     r = {r["id"]: r for r in all_reports()}[args.report]
     (r, pts, _), = report_points([r], datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ").date())
-    e, rms = orbit_of(pts)
+    fit = orbit_of(pts)
+    if fit is None:  # fewer than three of the report's points have a frame on disk
+        sys.exit(f"{args.report}: {len(pts)} points, but the family orbit needs three or more with "
+                 f"their frames on disk (kreutz.fetch or kreutz.sync the day first)")
+    e, rms = fit
     print(f"{args.report}: family orbit through its {len(pts)} points rms {rms:.0f}\" "
           f"(node {e.node:.1f} peri {e.peri:.1f} T {e.T:%m-%d %H:%M})")
     for group in args.track:

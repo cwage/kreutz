@@ -33,7 +33,11 @@ for rid in sys.argv[1:]:
         x, y = x0 + vx * k, y0 + vy * k
         r0, c0 = int(round(H - 1 - y)), int(round(x))
         s = np.clip(np.nan_to_num(seq.significance(i)), -CLIP_SIGMA, CLIP_SIGMA)
-        acc += s[r0 - R:r0 + R + 1, c0 - R:c0 + R + 1]
+        # only the part of the box that is on the frame; off-frame offsets stay 0
+        a0, a1 = max(r0 - R, 0), min(r0 + R + 1, H)
+        b0, b1 = max(c0 - R, 0), min(c0 + R + 1, W)
+        if a0 < a1 and b0 < b1:
+            acc[a0 - (r0 - R):a1 - (r0 - R), b0 - (c0 - R):b1 - (c0 - R)] += s[a0:a1, b0:b1]
     acc /= np.sqrt(N)
     flat = np.sort(acc.ravel())[::-1]
     rr, cc = np.unravel_index(np.argmax(acc), acc.shape)

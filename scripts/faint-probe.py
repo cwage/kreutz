@@ -55,6 +55,7 @@ Sequence.significance caches for frames it hasn't seen.
 
 import argparse
 import json
+import sys
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -195,7 +196,11 @@ def main():
     if args.orbit:
         from kreutz import orbit
         from kreutz.orbitsearch import _wcs, _where, orbit_of, sky_points
-        e0, _ = orbit_of(allpts)
+        fit = orbit_of(allpts)
+        if fit is None:  # fewer than three points with a frame on disk
+            sys.exit(f"--orbit needs three or more points (report plus --extra) with their frames on disk; "
+                     f"{len(allpts)} given")
+        e0, _ = fit
         ts, tx, ty = sky_points(allpts)
         el, rms = orbit.fit(ts, tx, ty, e0, _where(), free=("T", "node", "peri"))
         print(f"orbit through the points: rms {rms:.0f}\" node {el.node:.1f} peri {el.peri:.1f} T {el.T:%m-%d %H:%M}")
@@ -274,6 +279,8 @@ def main():
         out = np.full((2 * half + 1, 2 * half + 1), fill, np.float32)  # padded past the frame's edge
         a0, a1 = max(r - half, 0), min(r + half + 1, img.shape[0])
         b0, b1 = max(c - half, 0), min(c + half + 1, img.shape[1])
+        if a0 >= a1 or b0 >= b1:  # wholly off the frame: all padding
+            return out
         out[a0 - (r - half):a1 - (r - half), b0 - (c - half):b1 - (c - half)] = img[a0:a1, b0:b1]
         return out
 
