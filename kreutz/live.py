@@ -92,6 +92,15 @@ search's, less any within orbitsearch.SEP_PX of one, and are linked,
 vetted and followed with them. A track made only of orbit candidates is
 "found_by": "orbit" in its files, and isn't paged until it's confirmed
 unless --orbit-pages is given: a review tier while it proves itself live.
+--orbit-long N:T runs the orbit search a second time, over N-frame
+windows at threshold T, its candidates added as the first pass's are: a
+faint comet adds up over a longer passage before the 8-frame windows
+reach the threshold. Replayed over CCOR-1's October (orbit runs at 8 and
+16 frames, scripts/window-compare.py), 16:7.0 added no pages and caught
+three of 19 reported comets earlier (Wage's of 2026-10-29 by 45 min, two
+others by 30 and 12 min); on CCOR-2 the same added 0.25 pages a day, all
+at one spot (about 1600,1600) that CCOR-1 doesn't see, for one comet an
+hour earlier, so it's left off there.
 --render makes a confirmed object's cutouts and pictures (render.py,
 style.py) in the background under data/render/<alert name>/, and again
 every RENDER_EVERY frames while the object is still in view, so the
@@ -417,6 +426,18 @@ def sunward(c, sun_xy):
     to_sun = np.degrees(np.arctan2(sy - c["y"], sx - c["x"]))
     heading = np.degrees(np.arctan2(c["vy"], c["vx"]))
     return float(abs((heading - to_sun + 180) % 360 - 180)), float(np.hypot(c["vx"], c["vy"]))
+
+
+def orbit_long(s):
+    """--orbit-long's N:T, as (frames, threshold)."""
+    n, _, thr = s.partition(":")
+    try:
+        n, thr = int(n), float(thr)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected N:T, like 16:7.0, not {s!r}")
+    if n < 2:
+        raise argparse.ArgumentTypeError("N must be at least 2")
+    return n, thr
 
 
 def cfar(cands, threshold, t, what=""):
@@ -992,6 +1013,8 @@ def main():
     ap.add_argument("--notify", help="command run with the alert .json path as argument")
     ap.add_argument("--orbit-threshold", type=float, metavar="T",
                     help="also run the orbit-constrained search (orbitsearch.py) at threshold T")
+    ap.add_argument("--orbit-long", type=orbit_long, metavar="N:T",
+                    help="also run the orbit search over N-frame windows at threshold T (e.g. 16:7.0)")
     ap.add_argument("--orbit-pages", action="store_true",
                     help="page tracks found only by the orbit search at the candidate stage too")
     ap.add_argument("--render", action="store_true",
@@ -1007,7 +1030,8 @@ def main():
     (LIVE / "alerts").mkdir(parents=True, exist_ok=True)
     (LIVE / "log.jsonl").touch()  # so a tail -f has something to follow before anything fires
     page.write()  # the one status page over every instrument, data/index.html
-    history = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + args.n + args.link)
+    longest = max(args.n, args.orbit_long[0] if args.orbit_long else 0)
+    history = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + longest + args.link)
     # done: windows searched; chains: open tracks, as in evaluate.tracks;
     # pending: alerted objects still being followed. Resumed from the last
     # save when it's recent enough to matter.
@@ -1077,14 +1101,17 @@ def main():
                     print(f"status error: {e2}", file=sys.stderr)
                 continue
             cands = cfar(cands, args.threshold, t)
-            if args.orbit_threshold is not None:
+            passes = [(args.n, args.orbit_threshold, "orbit ")] if args.orbit_threshold is not None else []
+            if args.orbit_long:
+                passes.append((*args.orbit_long, f"orbit{args.orbit_long[0]} "))
+            for n, thr, what in passes:
                 try:
                     extra = [dict(asdict(c), found_by="orbit")
-                             for c in orbit_search(seq, last, args.n, args.orbit_threshold)
+                             for c in orbit_search(seq, last, n, thr)
                              if consistent(c.per_frame) and np.hypot(c.vx, c.vy) >= LIVE_SPEED_MIN]
-                except ValueError:
+                except ValueError:  # a gap within the longer window
                     extra = []
-                extra = cfar(extra, args.orbit_threshold, t, "orbit ")
+                extra = cfar(extra, thr, t, what)
                 cands += [c for c in extra
                           if all(np.hypot(c["x"] - o["x"], c["y"] - o["y"]) > ORBIT_SEP_PX for o in cands)]
             for c in cands:
