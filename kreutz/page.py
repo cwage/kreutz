@@ -14,6 +14,7 @@ without restarting them.
 
 import json
 import os
+import socket
 from pathlib import Path
 
 from . import DATA
@@ -27,7 +28,10 @@ REDIRECT = ('<!doctype html>\n<meta charset="utf-8">\n'
 def _write(path, text):
     # Two watchers may write the same files at once; each writes its own
     # temporary file and renames it, so a reader sees one whole version.
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    # Each watcher is pid 1 in its own container, so the hostname (the
+    # container's) tells them apart: four started together after a reboot
+    # shared one temporary file, and two died renaming it.
+    tmp = path.with_name(f".{path.name}.{socket.gethostname()}.{os.getpid()}.tmp")
     tmp.write_text(text)
     tmp.replace(path)
 

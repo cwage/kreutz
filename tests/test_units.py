@@ -1293,3 +1293,22 @@ def test_orbit_fit_keeps_the_perihelion_time_in_range():
     start = orbit.Elements(T=datetime(2026, 10, 27, 12, 0), node=12.0, peri=89.0, i=143.9)
     e, rms = orbit.fit(times, [30.0] * 4, [-30.0] * 4, start, "l1", free=("T",))
     assert abs((e.T - start.T).total_seconds()) <= orbit.T_RANGE_H * 3600 + 1
+
+
+def test_page_writes_from_two_containers_use_their_own_temp_files(tmp_path, monkeypatch):
+    # every watcher is pid 1 in its own container; after a reboot four
+    # started together, and two died renaming a temp file another had taken
+    from kreutz import page
+    monkeypatch.setattr(page.os, "getpid", lambda: 1)
+    seen = []
+    real = page.Path.write_text
+
+    def write_text(self, text, *a, **k):
+        seen.append(self.name)
+        return real(self, text, *a, **k)
+    monkeypatch.setattr(page.Path, "write_text", write_text)
+    for host in ("a1b2c3", "d4e5f6"):
+        monkeypatch.setattr(page.socket, "gethostname", lambda h=host: h)
+        page._write(tmp_path / "instruments.json", host)
+    assert len(set(seen)) == 2
+    assert (tmp_path / "instruments.json").read_text() == "d4e5f6"
