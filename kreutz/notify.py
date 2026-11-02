@@ -74,6 +74,8 @@ def compose(d, name):
     if far and not confirmed:
         return None
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
+    if isinstance(d, dict) and d.get("revived"):
+        hint += f"; back after {', '.join(d['revived'])} faded, held {len(track)} windows by the search"
     if far and d.get("found_by") == "orbit":
         hint += "; found by the orbit search only"
     elif far and d.get("on_line"):

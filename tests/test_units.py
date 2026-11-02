@@ -1321,3 +1321,33 @@ def test_orbit_long_takes_frames_and_threshold():
     for bad in ("16", "x:7", "16:x", "1:7.0"):
         with pytest.raises(argparse.ArgumentTypeError):
             live.orbit_long(bad)
+
+
+def test_a_long_chain_where_only_a_faded_alert_was_is_alerted_again(monkeypatch):
+    # the comet of 2026-11-02: alerted 10:15, faded 12:01, chained on all afternoon
+    t0 = datetime(2026, 11, 2, 10, 15, 25)
+    alert = {"time": t0.isoformat(), "x": 1775.0, "y": 1536.0, "vx": -7.0, "vy": -3.5,
+             "why": "alert: 20261102T1015_1775_1536"}
+    later = t0 + timedelta(hours=3)  # 12 frames on
+    c = {"x": 1775.0 - 7.0 * 12, "y": 1536.0 - 3.5 * 12}
+    monkeypatch.setattr(live, "known", lambda: [alert])
+    assert live.is_known(c, later)
+    assert live.revivable(c, later) == ["20261102T1015_1775_1536"]
+    # a veto on the same path keeps it quiet
+    star = dict(alert, why="auto: moves with the stars")
+    monkeypatch.setattr(live, "known", lambda: [alert, star])
+    assert live.revivable(c, later) is None
+    # so does a report, and nothing remembered there at all is no revival
+    monkeypatch.setattr(live, "known", lambda: [dict(alert, why="reported: Zesheng Yang")])
+    assert live.revivable(c, later) is None
+    monkeypatch.setattr(live, "known", lambda: [])
+    assert live.revivable(c, later) is None
+
+
+def test_a_revived_alert_says_so():
+    from kreutz import notify
+    track = [{"time": f"2026-11-02T{13 + k // 4:02d}:{15 * (k % 4):02d}:25", "x": 1700.0 - 7 * k, "y": 1500.0,
+              "vx": -7.0, "vy": -3.5} for k in range(6)]
+    title, lines, _, _ = notify.compose({"track": track, "paged": True, "revived": ["20261102T1015_1775_1536"]},
+                                        "x")
+    assert "back after 20261102T1015_1775_1536 faded, held 6 windows" in lines[0]
