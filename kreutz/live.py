@@ -206,16 +206,43 @@ def known():
     return [json.loads(l) for l in open(p)] if p.exists() else []
 
 
-def is_known(c, t):
-    """Near a vetted/known object's predicted position at time t."""
+def known_near(c, t):
+    """The memories (known.jsonl) whose object should be at c's place at t."""
+    out = []
     for k in known():
         kt = datetime.fromisoformat(k["time"])
         n = (t - kt) / FRAME
         if abs(n) > 96:
             continue
         if np.hypot(k["x"] + k["vx"] * n - c["x"], k["y"] + k["vy"] * n - c["y"]) < 15:
-            return True
-    return False
+            out.append(k)
+    return out
+
+
+def is_known(c, t):
+    """Near a vetted/known object's predicted position at time t."""
+    return bool(known_near(c, t))
+
+
+# A chain the search has held for REVIVE windows where an alert's object
+# should be, once nothing follows that object any more, is alerted again.
+# The memory of the alert silences the object's later chains for a day,
+# so it isn't re-alerted while it's followed; but a follow-up loses a
+# comet too faint for single frames, and then the search's chain of it
+# went on unheard: the comet of 2026-11-02, alerted 10:32, faded 12:01,
+# chained from 11:45 to past 17:00 (22 windows) without a word, while
+# Zesheng Yang's report of it in CCOR-2 came at 11:07.
+REVIVE = 6
+
+
+def revivable(c, t):
+    """Is candidate c at t known only as an earlier alert (no veto, no
+    report), so a long chain of it is worth alerting again? The alert
+    names, or None."""
+    near = known_near(c, t)
+    if near and all(k["why"].startswith("alert: ") for k in near):
+        return [k["why"][len("alert: "):] for k in near]
+    return None
 
 
 def remember(c, why):
@@ -1148,7 +1175,9 @@ def main():
             except Exception as e:  # a follow-up must never take the watcher down
                 print(f"{t:%H:%M} follow-up error: {e}", file=sys.stderr)
             for ch in chains:
-                if len(ch) == args.link and not is_known(ch[-1], t) and not followed(ch[-1], t, pending) \
+                revived = revivable(ch[-1], t) if len(ch) == REVIVE else None
+                if (len(ch) == args.link and not is_known(ch[-1], t) or revived) \
+                        and not followed(ch[-1], t, pending) \
                         and moves([dict(c, t=datetime.fromisoformat(c["time"])) for c in ch]):
                     c = ch[-1]
                     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1224,7 +1253,7 @@ def main():
                          "reports_checked": reps is not None, "other_instruments": others,
                          "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged,
                          "found_by": found_by, "orbit_rms": rms, "off_orbit": off_orbit,
-                         "line_score": line, "on_line": on_line},
+                         "line_score": line, "on_line": on_line, "revived": revived},
                         indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
@@ -1247,6 +1276,8 @@ def main():
                             heading_deg=round(off), paged=paged, note=quiet)
                         hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
                             if others else ""
+                        if revived:
+                            hint += f"; back after {', '.join(revived)} faded: the search has held it {len(ch)} windows"
                         print(f"ALERT {stem}{' (' + quiet + ')' if quiet else ''}{hint}", flush=True)
                     # follow it for a confirmed notification; start from what's
                     # measurable already
