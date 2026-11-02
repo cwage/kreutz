@@ -1312,3 +1312,12 @@ def test_page_writes_from_two_containers_use_their_own_temp_files(tmp_path, monk
         page._write(tmp_path / "instruments.json", host)
     assert len(set(seen)) == 2
     assert (tmp_path / "instruments.json").read_text() == "d4e5f6"
+
+
+def test_orbit_long_takes_frames_and_threshold():
+    import argparse
+    assert live.orbit_long("16:7.0") == (16, 7.0)
+    assert live.orbit_long("24:7") == (24, 7.0)
+    for bad in ("16", "x:7", "16:x", "1:7.0"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            live.orbit_long(bad)
