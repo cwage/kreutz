@@ -196,9 +196,11 @@ def swpc_canvas_to_report(t, x, y):
 # CROTA1 of -4.77, and turned back they lie 0.8-1.4 px (median) from our
 # tracks, where they had read ~45 px off; Ujfalussy's C2 comet of
 # 2026-11-03, turned back, 0-5 px from our confirmed track where it read
-# ~45 px off (an audit MISS of a comet we had). Converting needs a frame
-# near the report time for its roll; without one the point is skipped.
-LASCO_ROLLED_REPORTERS = {"Chuck Fields", "Kristof Ujfalussy"}
+# ~45 px off (an audit MISS of a comet we had); Banach's C2 comet of the
+# same day, turned back, on our alert's track to 1 px at 19:24. Converting
+# needs a frame near the report time for its roll; without one the point
+# is skipped.
+LASCO_ROLLED_REPORTERS = {"Chuck Fields", "Kristof Ujfalussy", "Eryk Banach"}
 ROLL_NEAR = timedelta(hours=1)
 _ROLL = {}
 
