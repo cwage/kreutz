@@ -189,14 +189,16 @@ def swpc_canvas_to_report(t, x, y):
     return float(col), float(h["NAXIS2"] - 1 - row)
 
 
-# One reporter measures LASCO on the level 0.5 frame as it comes, rolled
+# Some reporters measure LASCO on the level 0.5 frame as it comes, rolled
 # by SOHO's CROTA1, where everyone else (and lasco.load) has it turned
-# solar north up. His points are ours turned by the roll about the Sun:
-# on his three C2 comets of 2026-10-24/25, -4.62 to -4.76 deg against a
+# solar north up. Their points are ours turned by the roll about the Sun:
+# Fields' three C2 comets of 2026-10-24/25, -4.62 to -4.76 deg against a
 # CROTA1 of -4.77, and turned back they lie 0.8-1.4 px (median) from our
-# tracks, where they had read ~45 px off. Converting needs a frame near
-# the report time for its roll; without one the point is skipped.
-LASCO_ROLLED_REPORTERS = {"Chuck Fields"}
+# tracks, where they had read ~45 px off; Ujfalussy's C2 comet of
+# 2026-11-03, turned back, 0-5 px from our confirmed track where it read
+# ~45 px off (an audit MISS of a comet we had). Converting needs a frame
+# near the report time for its roll; without one the point is skipped.
+LASCO_ROLLED_REPORTERS = {"Chuck Fields", "Kristof Ujfalussy"}
 ROLL_NEAR = timedelta(hours=1)
 _ROLL = {}
 
