@@ -1314,6 +1314,26 @@ def test_page_writes_from_two_containers_use_their_own_temp_files(tmp_path, monk
     assert (tmp_path / "instruments.json").read_text() == "d4e5f6"
 
 
+def test_frame_downloads_from_two_containers_use_their_own_part_files(tmp_path, monkeypatch):
+    # the CCOR-2 watcher and the sync-ccor2 mirror, both pid 1, pull the same new frame
+    from kreutz import sync
+    monkeypatch.setattr(sync.os, "getpid", lambda: 1)
+    seen = []
+    real = type(tmp_path).write_bytes
+
+    def write_bytes(self, data):
+        seen.append(self.name)
+        return real(self, data)
+    monkeypatch.setattr(type(tmp_path), "write_bytes", write_bytes)
+    dest = tmp_path / "CCOR2_1A_20261105T004514_V00_NC.fits"
+    for host in ("a1b2c3", "d4e5f6"):
+        monkeypatch.setattr(sync.socket, "gethostname", lambda h=host: h)
+        dest.unlink(missing_ok=True)
+        assert sync.pull([(None, "u", dest)], get=lambda url: b"SIMPLE  = T") == 1
+    assert len(set(seen)) == 2
+    assert dest.read_bytes() == b"SIMPLE  = T"
+
+
 def test_orbit_long_takes_frames_and_threshold():
     import argparse
     assert live.orbit_long("16:7.0") == (16, 7.0)

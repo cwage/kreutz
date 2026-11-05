@@ -18,6 +18,7 @@ weeks, so a LASCO watcher with a long gap behind it wants this running).
 import argparse
 import os
 import re
+import socket
 import sys
 import time
 from datetime import datetime, timezone
@@ -61,8 +62,10 @@ def pull(frames, get=_get):
         # mirror pull the same new frames, and with one shared name one's
         # rename found the other's already done (a feed error and a poll's
         # delay, three times on 2026-10-24..26). The frames are the same
-        # bytes, so whichever lands last is fine.
-        tmp = dest.with_name(f".{dest.name}.{os.getpid()}.part")
+        # bytes, so whichever lands last is fine. Both are pid 1 in their
+        # containers, so the name carries the container too (the same
+        # race again, 2026-11-05 01:02).
+        tmp = dest.with_name(f".{dest.name}.{socket.gethostname()}.{os.getpid()}.part")
         tmp.write_bytes(body)
         os.replace(tmp, dest)
         new += 1
