@@ -817,23 +817,39 @@ def tile(img, r, c, half=40):
     return out
 
 
+TICK_SEEN, TICK_GUESS = 255, 128  # animation: the mark in a frame the search covered, and in an earlier one
+
+
 def animation(seq, track, path):
-    """Crops of the raw and significance frames along the track, as a GIF."""
+    """Crops of the raw and significance frames along the track, as a GIF:
+    the eight frames ending at the alert's, the crop following the last
+    detection carried along its motion by time, not by frame count, so
+    across a gap in the frames it lands where the object would be. Tick
+    marks either side of that place: full in the frames the linked
+    windows covered, where the search saw it, half-bright in the earlier
+    ones, where it's only the line run back (the search never looked
+    there, and 'tracked behind the occulter' was asked about it), and
+    none where the place is off the frame (the crop is black there)."""
     last = track[-1]
     i_last = last["frame"]
+    n = len(last.get("per_frame") or ()) or 1
+    seen_from = min(c["frame"] for c in track) - n + 1  # the first frame of the first window
+    H, W = seq.shape
     frames = []
-    for i in range(i_last - 7, i_last + 1):
-        k = i - i_last
+    for i in range(max(i_last - 7, 0), i_last + 1):
+        k = (seq.times[i] - seq.times[i_last]) / CADENCE
         x, y = last["x"] + last["vx"] * k, last["y"] + last["vy"] * k
         r, c = seq.report_to_rc(x, y)
         r, c = int(round(r)), int(round(c))
+        tick = (TICK_SEEN if i >= seen_from else TICK_GUESS) if 0 <= r < H and 0 <= c < W else None
         tiles = []
         for img, lo, hi in ((seq.raw(i), 1, 99.5), (seq.significance(i), 1, 99.7)):
             crop = tile(img, r, c)
             v = np.nanpercentile(crop, [lo, hi]) if np.isfinite(crop).any() else np.zeros(2)
             t = np.clip((np.nan_to_num(crop, nan=v[0]) - v[0]) / (v[1] - v[0] + 1e-30) * 255, 0, 255)
             t = np.flipud(t.astype(np.uint8))  # as displayed: north up
-            t[40, 34:38] = t[40, 44:48] = 255  # tick marks either side of the prediction
+            if tick is not None:
+                t[40, 34:38] = t[40, 44:48] = tick
             tiles.append(t)
         frames.append(Image.fromarray(np.kron(np.hstack(tiles), np.ones((3, 3), np.uint8))))
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=400, loop=0)
@@ -988,13 +1004,14 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "following": following, "recent": decisions, "waiting": waiting}
 
 
-def write_status(chains, pending, t, reps=None, waiting=None):
+def write_status(chains, pending, t, reps=None, waiting=None, notify=None):
     p = LIVE / "log.jsonl"
     recent = [json.loads(ln) for ln in open(p).readlines()[-STATUS_RECENT:]] if p.exists() else []
     recent.reverse()
 
     s = status(chains, pending, t, recent, datetime.now(timezone.utc).replace(tzinfo=None),
                rendered=pictures, files_of=alert_files, reps=reps, waiting=waiting)
+    s["notify"] = notify  # does this watcher page (--notify)? the audit's digest counts pages only where it does
     tmp = LIVE / "status.json.tmp"
     tmp.write_text(json.dumps(s, indent=1))
     tmp.replace(LIVE / "status.json")
@@ -1112,7 +1129,7 @@ def main():
             if waiting != last_waiting:
                 print(f"{seq.times[-1]:%Y-%m-%d %H:%M}: {waiting}", file=sys.stderr)
                 try:
-                    write_status(chains, pending, seq.times[-1], reps, waiting=waiting)
+                    write_status(chains, pending, seq.times[-1], reps, waiting=waiting, notify=bool(args.notify))
                 except Exception as e:
                     print(f"status error: {e}", file=sys.stderr)
                 last_waiting = waiting
@@ -1131,7 +1148,8 @@ def main():
                 # (CCOR-2 missing two frames, 2026-10-29 15:45-17:30) left
                 # it looking like a stalled watcher
                 try:
-                    write_status(chains, pending, t, reps, waiting=f"skipped the {t:%H:%M} window: {e}")
+                    write_status(chains, pending, t, reps, waiting=f"skipped the {t:%H:%M} window: {e}",
+                                 notify=bool(args.notify))
                 except Exception as e2:
                     print(f"status error: {e2}", file=sys.stderr)
                 continue

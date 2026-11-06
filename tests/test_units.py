@@ -1371,3 +1371,119 @@ def test_a_revived_alert_says_so():
     title, lines, _, _ = notify.compose({"track": track, "paged": True, "revived": ["20261102T1015_1775_1536"]},
                                         "x")
     assert "back after 20261102T1015_1775_1536 faded, held 6 windows" in lines[0]
+
+
+def test_audit_counts_a_paged_alert_as_a_catch_even_if_it_faded():
+    # the comet of 2026-11-02: paged 10:32, faded 12:01, reported from that page 18:29
+    from kreutz import audit
+    r, pts = _audit_report()
+    later = pts[-1][0] + timedelta(hours=3)
+    alert = _audit_record("alert", "a")
+    cands = audit.candidates([alert], {"chains": []})
+    assert audit.judge(r, pts, cands, {"a": "faded"}, later)[0] == "LOST"
+    cands = audit.candidates([dict(alert, paged=True)], {"chains": []})
+    assert audit.judge(r, pts, cands, {"a": "faded"}, later)[0] == "OK"
+
+
+def test_audit_takes_back_a_false_alert_a_report_later_matched():
+    from kreutz import audit
+    flagged = ["a", "b", "c"]
+    assert audit.unflag(flagged, {"b": "report_xx_1", "z": "report_xx_2"}) == ["NOT FALSE b: matched report_xx_1"]
+    assert flagged == ["a", "c"]
+    assert audit.unflag(flagged, {}) == []
+
+
+def test_audit_says_when_we_had_it_against_the_reporter():
+    from kreutz import audit
+    r, pts = _audit_report()
+    r = dict(r, posted_utc="2026-10-16T12:00:00Z")
+    rec = _audit_record("alert", "a")  # first frame 10:00:25, decided 10:45
+    s = audit.timing([("alert", rec)], r, pts)
+    assert "ours from 10:00, theirs 10:00 (+0.0 h)" in s
+    assert "decided 10:45, posted 12:00 (+1.2 h)" in s  # they posted 1.25 h after we knew
+    assert audit.timing([("star", _audit_record("star"))], r, pts).startswith("ours from")
+    assert audit.timing([], r, pts) == ""
+
+
+def test_audit_digest_collects_the_day(tmp_path):
+    from kreutz import audit
+    log = tmp_path / "audit.log"
+    log.write_text("2026-11-06T12:00 [CCOR-1] MISS report_a X Kreutz\n"
+                   "2026-11-06T13:30 [CCOR-2] FALSE? 20261106T1300_1_2: alert 11-06 13:00, then faded 13:20\n"
+                   "2026-11-06T14:00 [CCOR-1] FALSE? 20261106T1330_3_4: alert 11-06 13:30, paged, then faded 14:00\n"
+                   "2026-11-06T18:00 [LASCO C2] OK report_b Y Kreutz\n"
+                   "garbage line\n")
+    live = tmp_path / "live"
+    live.mkdir()
+    (live / "log.jsonl").write_text(
+        json.dumps({"kind": "alert", "decided_utc": "2026-11-06T13:35:00", "paged": True}) + "\n"
+        + json.dumps({"kind": "alert", "decided_utc": "2026-11-06T11:00:00", "paged": True}) + "\n"
+        + json.dumps({"kind": "alert", "decided_utc": "2026-11-06T16:00:00", "paged": False}) + "\n")
+    since, now = datetime(2026, 11, 6, 13, 0), datetime(2026, 11, 7, 13, 0)
+    assert audit.logged_since(since, log) == [
+        "[CCOR-2] FALSE? 20261106T1300_1_2: alert 11-06 13:00, then faded 13:20",
+        "[CCOR-1] FALSE? 20261106T1330_3_4: alert 11-06 13:30, paged, then faded 14:00",
+        "[LASCO C2] OK report_b Y Kreutz"]
+    # the log's "paged" means the page gates passed; it's a page only where the watcher notifies
+    assert audit.pages_since(since, [("ccor1", live)]) == {"CCOR-1": (1, None)}  # no status.json yet
+    assert audit.digest(since, now, log, [("ccor1", live)])[1][0].endswith("1 passed the gates CCOR-1 (no pager)")
+    (live / "status.json").write_text(json.dumps({"notify": True}))
+    assert audit.pages_since(since, [("ccor1", live)]) == {"CCOR-1": (1, True)}
+    title, lines = audit.digest(since, now, log, [("ccor1", live)])
+    assert lines[0] == "11-06 13:00 to 11-07 13:00 UTC: 1 page CCOR-1"
+    assert lines[1:] == ["[CCOR-1] FALSE? 20261106T1330_3_4: alert 11-06 13:30, paged, then faded 14:00",
+                         "[LASCO C2] OK report_b Y Kreutz"]  # the unpaged FALSE? cost nothing: left out
+    _, lines = audit.digest(datetime(2026, 11, 8), datetime(2026, 11, 9), log, [("ccor1", live)])
+    assert lines == ["11-08 00:00 to 11-09 00:00 UTC: no pages", "no reports to judge, nothing taken back"]
+
+
+def test_animation_marks_only_where_the_search_looked(tmp_path):
+    # issue #89: the earlier frames' marks are the line run back, and were
+    # drawn off the frame too; now dim, and none off the frame, stepped by time
+    import types
+    from PIL import Image
+    from kreutz.frames import CADENCE
+    t0 = datetime(2026, 11, 5, 12, 0, 22)
+    times = [t0 + CADENCE * i for i in range(7)] + [t0 + CADENCE * i for i in (8, 9, 10)]  # a frame missing
+    H, W = 200, 200
+    last = {"frame": 9, "x": 100.0, "y": 100.0, "vx": -13.0, "vy": 0.0, "per_frame": [3.0] * 4}
+    track = [dict(last, frame=7), dict(last, frame=8), last]  # three 4-frame windows: frames 4..9 seen
+    by_time = 100.0 - 13.0 * (times[6] - times[9]) / CADENCE  # 152: by frame count it would be 139
+
+    def raw(i):
+        a = np.zeros((H, W), np.float32)
+        xi = 100.0 - 13.0 * (times[i] - times[9]) / CADENCE
+        if 0 <= xi < W:
+            a[H - 1 - 100 - 30 + i, int(xi)] = 50.0  # something different in every crop: GIF frames that match are merged
+        if i == 6:
+            a[H - 1 - 100, int(by_time)] = 50.0
+        return a
+    seq = types.SimpleNamespace(times=times, shape=(H, W), raw=raw, significance=lambda i: np.zeros((H, W), np.float32),
+                                report_to_rc=lambda x, y: (H - 1 - y, x))
+    out = tmp_path / "a.gif"
+    live.animation(seq, track, out)
+    im = Image.open(out)
+    assert im.n_frames == 8  # frames 2..9
+
+    def px(k, x, y):
+        im.seek(k)
+        return im.convert("L").getpixel((x, y))
+    tick = (34 * 3 + 1, 40 * 3 + 1)
+    assert px(7, *tick) == live.TICK_SEEN       # frame 9, in the last window
+    assert px(2, *tick) == live.TICK_SEEN       # frame 4, the first window's first frame
+    assert px(1, *tick) == live.TICK_GUESS      # frame 3: before the search looked
+    assert px(0, *tick) == 0                    # frame 2: x = 204, off the frame; no mark
+    assert px(4, 40 * 3 + 1, 40 * 3 + 1) == 255  # frame 6: the crop is centred by time, on the bright pixel
+
+
+def test_audit_follows_the_watcher_s_revival_links(tmp_path):
+    # the comet of 2026-11-02 in CCOR-2: alerted 16:45, faded, alerted again 21:15 as the same
+    # object (live.py "revived"), and the report matched the 21:15 one by position only
+    from kreutz import audit
+    (tmp_path / "b.json").write_text(json.dumps({"revived": ["a"]}))
+    (tmp_path / "c.json").write_text(json.dumps({"revived": None}))
+    m = audit.revived_too({"b": "report_xx_1", "c": "report_xx_2", "d": "report_xx_3"}, tmp_path)
+    assert m == {"b": "report_xx_1", "c": "report_xx_2", "d": "report_xx_3", "a": "report_xx_1"}
+    assert audit.pager(tmp_path) is None
+    (tmp_path / "status.json").write_text(json.dumps({"notify": False}))
+    assert audit.pager(tmp_path) is False

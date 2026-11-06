@@ -163,7 +163,7 @@ Modules, each with usage in its docstring:
 | `kreutz.style` | pictures from a render's FITS cubes in a named preset (reference styles, copy and change) |
 | `kreutz.live` | watch the SWPC real-time feed; alert on unreported candidates and keep going |
 | `kreutz.score` | table of the live alerts against the reports that appeared: our lead or lag |
-| `kreutz.audit` | the other way round: reports the watcher missed, vetoed, or alerted on and then dropped, and alerts that came to nothing |
+| `kreutz.audit` | the other way round: reports the watcher missed, vetoed, or alerted on and then dropped, when we had each against its reporter, and alerts that came to nothing; `--loop --digest HH:MM` runs it for every watcher and sends a daily digest |
 | `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
 | `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
 | `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html`, and `data/mark.html`, a frame player for circling things in a render (`mark.html?dir=render-ccor2/<name>/style-soft/field`) |
@@ -278,10 +278,19 @@ does it by hand. The old per-watcher `status.html` pages now redirect to it.
 docker compose up -d web     # then http://localhost:8000/
 ```
 
-`scripts/watch.sh` keeps an eye on the running watchers: it prints a line
-for each alert, confirmation, rejection, report match, error or stopped
-container, flags a watcher whose `status.json` goes 45 minutes without an
-update, and runs `kreutz.audit` for every instrument each half hour.
+The audit runs on its own alongside the watchers, every half hour for
+every instrument with one, and once a day sends the day's verdicts and
+page count to the ntfy topic at low priority:
+
+```sh
+docker compose run --rm -d --name kreutz-audit kreutz kreutz.audit --loop --digest 13:00
+```
+
+Its lines go to `data/audit.log`. `scripts/watch.sh` is for a terminal:
+it prints a line for each alert, confirmation, rejection, report match,
+error or stopped container, flags a watcher whose `status.json` goes 45
+minutes without an update, and runs the audit too (harmless alongside
+the loop: a verdict is said once wherever it's first seen).
 
 Chains under three windows are mostly noise and appear only as a count.
 With `--keep-days N`, frames and significance maps more than N days old are
