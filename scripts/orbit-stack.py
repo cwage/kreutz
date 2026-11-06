@@ -15,7 +15,8 @@ up about the Sun (lasco.load). Prints, per frame, the significance there (best
 within 2 px) and the running sum / sqrt(n); then the full stack against
 NULL offset copies of the path (--null-r px away, random directions): its
 rank and z-score among them. A comet stacks up with more frames; noise
-doesn't, and sits inside the offsets' spread.
+doesn't, and sits inside the offsets' spread. --line stacks along the
+straight line fitted to the track instead, for one off the family orbit.
 """
 
 import argparse
@@ -115,10 +116,29 @@ def main():
                     help="also stack shifted copies of the path, every 2 px out to PX either way, and give the best; "
                          "the offsets get the same best-of-the-grid, so the z stays fair. For a path extrapolated "
                          "hours past its track, where the orbit's error grows")
+    ap.add_argument("--line", action="store_true",
+                    help="stack along the straight line fitted to the track (this instrument's own points) "
+                         "instead of the Kreutz orbit: for a track the family orbit fits badly")
     args = ap.parse_args()
     src = INSTRUMENTS[args.source]
-    e, rms = fit(args.track, src)
-    print(f"orbit through the {src.label} track: rms {rms:.0f}\", T {e.T:%m-%d %H:%M}, node {e.node:.1f}")
+    if args.line:
+        if src is not INSTRUMENT:
+            raise SystemExit("--line only for this instrument's own track (--source left out)")
+        t0 = args.track[0][0]
+        h = np.array([(t - t0).total_seconds() / 3600 for t, _, _ in args.track])
+        px, py = (np.polyfit(h, [p[k] for p in args.track], 1) for k in (1, 2))
+        res = np.hypot(np.polyval(px, h) - [p[1] for p in args.track], np.polyval(py, h) - [p[2] for p in args.track])
+        print(f"line through the track: {np.hypot(px[0], py[0]):.1f} px/h, rms {np.sqrt(np.mean(res ** 2)):.1f} px")
+
+        def where_at(t, path):
+            k = (t - t0).total_seconds() / 3600
+            return float(np.polyval(px, k)), float(np.polyval(py, k))
+    else:
+        e, rms = fit(args.track, src)
+        print(f"orbit through the {src.label} track: rms {rms:.0f}\", T {e.T:%m-%d %H:%M}, node {e.node:.1f}")
+
+        def where_at(t, path):
+            return project(e, t, path)
     seq = Sequence(frame_paths(args.start, args.end))
     H, W = seq.shape
     rng = np.random.default_rng(1)
@@ -132,7 +152,7 @@ def main():
     for i, t in enumerate(seq.times):
         if t < args.start:
             continue
-        xy = project(e, t, seq.paths[i])
+        xy = where_at(t, seq.paths[i])
         if xy is None:
             continue
         x, y = xy[0] + args.shift[0], xy[1] + args.shift[1]
