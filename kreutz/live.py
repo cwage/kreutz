@@ -1084,7 +1084,15 @@ def main():
             time.sleep(POLL_S)
             continue
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        seq = Sequence(frame_paths(now - history - timedelta(hours=2), now))
+        paths = frame_paths(now - history - timedelta(hours=2), now)
+        if not paths:  # the feed has been dry longer than the window (LASCO, 2026-11-04)
+            if last_waiting != "dry":
+                print(f"{now:%Y-%m-%d %H:%M}: no frames since {now - history - timedelta(hours=2):%m-%d %H:%M}, "
+                      f"waiting for the feed", flush=True)
+                last_waiting = "dry"
+            time.sleep(POLL_S)
+            continue
+        seq = Sequence(paths)
         sun_xy = seq.rc_to_report(*seq.sun_rc())  # report coords, for pageworthy
         if field is None or INSTRUMENT.season_days:
             field = lane_field(now) if seq.shape == (FRAME_ROWS, FRAME_COLS) else build_field(seq.shape, when=now)
