@@ -90,6 +90,18 @@ def test_parse_sungrazer_report_page():
     assert out[0]["posted_utc"] == "2026-09-23T23:08:27Z"  # the stamp is US Eastern (EDT)
 
 
+def test_parse_report_with_no_group_keeps_its_points():
+    # Lecci's C2 comet of 2026-11-08: no group, so the points start one field early
+    lines = ["report_vl_20261108152830", "Vito Lecci", "2026-11-08", "Potential Comet", "C2",
+             "1836 740 1018", "1848 732 1009", "published",
+             "report_eb_20261108085320", "Eryk Banach", "2026-11-08", "Retracting Report", "Kreutz", "C2",
+             "published", "Pagination"]
+    r, q = reports.parse(lines)
+    assert r["points"] == [["1836", 740.0, 1018.0], ["1848", 732.0, 1009.0]]
+    assert reports.telescope_of(r) == "C2" and r["group"] is None and r["kind"] == "Potential Comet"
+    assert q["kind"] == "Retracting Report" and q["points"] == [] and reports.telescope_of(q) == "C2"
+
+
 def test_swpc_canvas_sun_maps_to_crpix(monkeypatch):
     hdr = {"PC1_1": 0.9159, "PC1_2": 0.4014, "PC2_1": -0.4014, "PC2_2": 0.9159,
            "CRPIX1": 1002.07, "CRPIX2": 968.06, "NAXIS2": 1920}
