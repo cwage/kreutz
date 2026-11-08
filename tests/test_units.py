@@ -90,6 +90,119 @@ def test_parse_sungrazer_report_page():
     assert out[0]["posted_utc"] == "2026-09-23T23:08:27Z"  # the stamp is US Eastern (EDT)
 
 
+def _noisy_seq(t0, n, shape=(320, 400), source=None, seed=3):
+    """A fake Sequence: N(0,1) significance maps, with a 6-sigma source
+    moving along source(t) -> (x, y) when given."""
+    import types
+    rng = np.random.default_rng(seed)
+    times = [t0 + timedelta(minutes=15) * k for k in range(n)]
+    maps = {}
+
+    def significance(i):
+        if i not in maps:
+            m = rng.standard_normal(shape).astype(np.float32)
+            if source:
+                x, y = source(times[i])
+                m[int(round(shape[0] - 1 - y)), int(round(x))] += 6.0
+            maps[i] = m
+        return maps[i]
+    return types.SimpleNamespace(times=times, shape=shape, significance=significance)
+
+
+def test_stack_reads_a_planted_source_and_not_noise():
+    from kreutz import stackcheck
+    t0 = datetime(2026, 11, 8, 2, 0, 25)
+    track = [{"time": (t0 + timedelta(minutes=15) * k).isoformat(), "x": 200.0 - 2 * k, "y": 160.0 - 1.5 * k,
+              "vx": -2.0, "vy": -1.5, "per_frame": [1] * 4} for k in (3, 4, 5)]
+    where = stackcheck.line_through(track)
+    assert where(t0 + timedelta(minutes=15) * 4) == pytest.approx((192.0, 154.0))
+    start, end = stackcheck.span(track)
+    assert start == t0 and end == t0 + timedelta(minutes=75)
+    real = stackcheck.stack(_noisy_seq(t0, 12, source=where), where, start, t0 + timedelta(minutes=165))
+    noise = stackcheck.stack(_noisy_seq(t0, 12), where, start, t0 + timedelta(minutes=165))
+    assert real.n == 12 and noise.n == 12
+    assert real.z_at() > 8 and noise.z_at() < 4
+    assert real.z_at(end) > real.z_at(t0 + timedelta(minutes=15))  # grows with frames
+    back = stackcheck.Stack.from_dict(json.loads(json.dumps(real.to_dict())))
+    assert back.n == 12 and back.z_at() == pytest.approx(real.z_at(), abs=0.05)  # to_dict rounds
+    assert back.summary()["n"] == 12 and back.summary()["beaten"] == 0
+    assert stackcheck.verdict(real.z_at()) == "real" and stackcheck.verdict(2.0) == "weak"
+    assert stackcheck.verdict(None) is None
+
+
+def test_page_for_and_report_page_once(monkeypatch, tmp_path):
+    from kreutz import stackcheck
+    t0 = datetime(2026, 11, 8, 2, 0, 25)
+    track = [{"time": (t0 + timedelta(minutes=15) * k).isoformat(), "x": 200.0 - 2 * k, "y": 160.0 - 1.5 * k,
+              "vx": -2.0, "vy": -1.5, "per_frame": [1] * 4} for k in (3, 4, 5)]
+    where = stackcheck.line_through(track)
+    seq = _noisy_seq(t0, 16, source=where)
+    # the alert's own frames: a stack, but not yet a verdict of real
+    st = live.track_stack(seq, track)
+    assert st is not None and st.n == 6
+    assert live.page_for(False, None, st) is None and live.page_for(True, {"id": "r"}, st) is None
+    assert live.page_for(True, None, None) == "watching"
+    assert live.page_for(True, None, st) in ("watching", "report")
+    monkeypatch.setattr(live, "LIVE", tmp_path)
+    (tmp_path / "alerts").mkdir()
+    alert = tmp_path / "alerts" / "20261108T0245_190_152.json"
+    alert.write_text("{}")
+    f = {"alert": str(alert), "track": track, "others": [], "known": None, "points": [],
+         "t": datetime.fromisoformat(track[-1]["time"]), "x": 190.0, "y": 152.5, "vx": -2.0, "vy": -1.5,
+         "misses": 0, "paged": True, "stack": st.to_dict(), "report_paged": False, "lane_px": 9, "heading_deg": 7}
+    sent = []
+    monkeypatch.setattr(live.subprocess, "Popen", lambda cmd: sent.append(cmd))
+    for i in range(6, 16):
+        x, y = where(seq.times[i])
+        live.extend_stack(f, seq, i, x, y, "python -m kreutz.notify")
+    assert stackcheck.Stack.from_dict(f["stack"]).n == 16
+    assert f["report_paged"] is True and len(sent) == 1  # one REPORT page, however far the stack goes on
+    rep = json.loads(alert.with_name(alert.stem + ".report.json").read_text())
+    assert rep["kind"] == "report" and rep["stack"]["z"] >= stackcheck.REAL_Z and rep["report"] == live.form_lines(track)
+    recs = [json.loads(ln) for ln in (tmp_path / "log.jsonl").read_text().splitlines()]
+    assert [r["kind"] for r in recs] == ["report"] and recs[0]["alert"] == str(alert)
+    assert rep["why"].startswith("stack z")
+    assert live.report_why(2.0, 100) is None and live.report_why(None, 100) is None  # a negative stack never pages
+    # a faint one: the stack never reads real, but the search holds it
+    monkeypatch.setattr(live, "REAL_Z", 1000.0)
+    monkeypatch.setattr(live, "WEAK_Z", -100.0)
+    g = dict(f, alert=str(alert.with_name("faint.json")), stack=st.to_dict(), report_paged=False)
+    sent.clear()
+    for k, i in enumerate(range(6, 16)):
+        x, y = where(seq.times[i])
+        g["held_windows"] = k + 1
+        live.extend_stack(g, seq, i, x, y, "python -m kreutz.notify")
+        assert g["report_paged"] is (k + 1 >= live.HELD_WINDOWS)
+    assert len(sent) == 1
+    rep = json.loads(alert.with_name("faint.report.json").read_text())
+    assert rep["why"].startswith(f"held {live.HELD_WINDOWS} windows") and rep["held_windows"] == live.HELD_WINDOWS
+
+
+def test_verdict_pages():
+    from kreutz import notify
+    track = [{"time": "2026-11-08T07:06:09", "x": 636.0, "y": 713.0, "vx": -1.5, "vy": -1.5},
+             {"time": "2026-11-08T07:30:10", "x": 633.0, "y": 708.0, "vx": -1.5, "vy": -2.0}]
+    base = {"track": track, "other_instruments": [], "known": None, "paged": True, "lane_px": 10, "heading_deg": 9,
+            "report": ["0706 636 713", "0730 633 708"]}
+    weak = dict(base, page="watching", stack={"n": 6, "z": 3.1, "null_mean": 2.0, "null_std": 0.9, "stack": 4.8, "beaten": 1})
+    title, lines, prio, _ = notify.compose(weak, "a.json")
+    assert "watching" in title and "no action" in title and prio == "low" and "stack z 3.1" in lines[0]
+    strong = dict(weak, page="report", stack=dict(weak["stack"], z=11.2))
+    title, lines, prio, _ = notify.compose(strong, "a.json")
+    assert title.endswith("REPORT, stack says real") and prio == "urgent" and lines[-1] == "0730 633 708"
+    later = dict(base, kind="report", frames=4, note="straight-line residual 0.3 px over 4 frames", stack=strong["stack"])
+    title, lines, prio, _ = notify.compose(later, "a.report.json")
+    assert "REPORT" in title and prio == "urgent" and "held 4 frames" in lines[0]
+    conf = dict(base, kind="confirmed", frames=5, note="straight-line residual 0.3 px over 5 frames",
+                stack=strong["stack"], report_paged=False)
+    title, _, prio, _ = notify.compose(conf, "a.confirmed.json")
+    assert title.endswith("REPORT, confirmed") and prio == "urgent"
+    title, _, prio, _ = notify.compose(dict(conf, report_paged=True), "a.confirmed.json")
+    assert "measured block" in title and prio == "low"  # the REPORT page already went
+    assert notify.compose(dict(weak, paged=False, page=None), "a.json") is None  # held by a gate: as before
+    assert notify.compose(dict(weak, other_instruments=[{"reporter": "X", "telescope": "C3"}]), "a.json")[2] == "low"
+
+
 def test_parse_report_with_no_group_keeps_its_points():
     # Lecci's C2 comet of 2026-11-08: no group, so the points start one field early
     lines = ["report_vl_20261108152830", "Vito Lecci", "2026-11-08", "Potential Comet", "C2",

@@ -214,11 +214,46 @@ fires that isn't a star and isn't already reported, writes
 `data/live/alerts/<time>_<x>_<y>.json` and `.gif`, appends to
 `data/live/log.jsonl`, and keeps watching. It then measures the object in
 each new frame; once it has held for five frames, a second "confirmed" file
-is written with the report block ready for Sungrazer's form. With
-`--notify "python -m kreutz.notify"` and `NTFY_TOPIC` set in `.env`, both
-stages page an ntfy topic with the `kreutz.report` command to run, except
-that a candidate that doesn't move like a sungrazer, pointed more than 20
-degrees off straight at the Sun or slower than the instrument's floor (4
+is written with the report block ready for Sungrazer's form.
+
+**Pages.** With `--notify "python -m kreutz.notify"` and `NTFY_TOPIC` set in
+`.env`, the watcher pages an ntfy topic, and the title says what to do:
+
+- `REPORT` (urgent): an unreported candidate the tool is sure of. The page
+  carries the evidence (the stack, the gates, frames held, whether anyone
+  has reported anything nearby) and the positions in Sungrazer's form
+  layout, so it can be filed from a phone. It comes when the candidate's
+  stack reads real (below), when the follow-up has measured it in five
+  frames on a straight line (`confirmed`), or when the search or the
+  follow-up has held it `HELD_WINDOWS` (6) windows after the alert with a
+  positive stack. One REPORT per object; a confirmation after it is a quiet
+  page with the measured block.
+- `watching` (low): a candidate that passed the page gates but whose stack
+  is still weak. No action; it pages REPORT if it gets there.
+- `known comet` (low, at confirmation): matched to somebody's report.
+- Nothing for a candidate held by a gate (below) until it's confirmed, and
+  then a quiet page saying why it was held, unless the orbit search found it.
+
+The stack (`kreutz/stackcheck.py`) is what settled every live candidate by
+hand before this: the significance maps added along the object's path and
+compared with the same sum along 200 offset copies of the path, as a
+z-score. It starts at the alert over the alert's own frames and grows
+with each frame the follow-up looks at, at the measured position, else
+the search chain's, else the predicted one. `scripts/stack-calibrate.py`
+ran it over every alert of 2026-10-23..11-08 (`data/calib/`): along the
+alert's own line, no false CCOR alert that passed the gates stacked past
+6.3 while real ones ran 3 to 50, so `REAL_Z` is 8 on CCOR; C2's and C3's
+false alerts stacked to 13.8 (stars and movers their gates let through),
+so 15 there. The faint real comets stacked 3 to 6, no better than the false
+alerts, which is why persistence is the other way to REPORT: every false
+alert that passed the gates in that span was never seen again after its
+alert frame, while the faint real ones were held by the search for hours.
+The status page shows each followed object's stack. `KREUTZ_URL` in `.env`
+(where `data/` is served) makes a page open the watcher's status page when
+tapped.
+
+**Gates.** A candidate that doesn't move like a sungrazer, pointed more than
+20 degrees off straight at the Sun or slower than the instrument's floor (4
 px/frame on CCOR-1, 2.5 on CCOR-2), is not paged until it's confirmed:
 it's still written, followed, pictured and shown on the status page as
 "not paged". Every real alert so far was within 14 degrees of sunward at

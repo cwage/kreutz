@@ -138,6 +138,7 @@ from .report import MIN_POINTS, block, fit, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
 from .orbitsearch import FAMILIES, SAME_RMS, SEP_PX as ORBIT_SEP_PX, family_rms, joint_rms, orbit_of, orbit_search
+from .stackcheck import REAL_Z, Stack, line_through, span as stack_span, stack as stack_along
 from .vet import STATIONARY, follow, line_like, line_stack, same_as_yesterday, through_line
 
 FEED = INSTRUMENT.feed
@@ -634,6 +635,103 @@ def occulted_r(sig, sun_rc, limit):
     return None
 
 
+# A followed candidate pages REPORT when its stack reads real (REAL_Z, per
+# instrument), or when the search or the follow-up has held it HELD_WINDOWS
+# windows after the alert with the stack at least WEAK_Z. Every false alert
+# that passed the page gates from 2026-10-23 to 11-08 was never seen again
+# after its alert frame (faded on three misses within the hour, 16 of 16
+# across the four instruments); the faint real ones the follow-up couldn't
+# measure were held by the search for hours (CCOR-1 2026-10-29 22:15 and
+# 11-02 18:00, CCOR-2 11-02 16:45), with a line stack of 4.6 to 5.5. The
+# revival rule (REVIVE) counts the same way.
+HELD_WINDOWS = 6
+WEAK_Z = 3.5
+
+
+def report_why(z, held_windows):
+    """Why a candidate's page says REPORT now, or None: the stack, or
+    persistence with a positive stack."""
+    if z is None:
+        return None
+    if z >= REAL_Z:
+        return f"stack z {z:.1f} reads real (>= {REAL_Z:g})"
+    if held_windows >= HELD_WINDOWS and z >= WEAK_Z:
+        return f"held {held_windows} windows after the alert, stack z {z:.1f}"
+    return None
+
+
+def track_stack(seq, track):
+    """The stack (stackcheck) along the line through an alert's track over
+    the track's own frames, or None when it can't be had: the page's
+    verdict, and the start of what the follow-up carries."""
+    try:
+        start, end = stack_span(track)
+        st = stack_along(seq, line_through(track), start, end)
+        return st if st.n else None
+    except Exception as e:
+        print(f"stack: {e}", file=sys.stderr)
+        return None
+
+
+def page_for(paged, known, st):
+    """What an alert's page says. "report": passed the page gates,
+    unreported, and its stack reads real (z at REAL_Z or past). "watching":
+    passed the gates, unreported, stack weak or none yet; the follow-up
+    pages REPORT if the stack gets there. None: held by a gate, or a
+    reported comet (notify.py says what it does with those)."""
+    if not paged or known:
+        return None
+    z = st.z_at() if st else None
+    return "report" if z is not None and z >= REAL_Z else "watching"
+
+
+def form_lines(track):
+    """A track's positions in Sungrazer's form layout, for a page before
+    anything is measured frame by frame."""
+    return [f"{datetime.fromisoformat(c['time']):%H%M} {c['x']:.0f} {c['y']:.0f}" for c in track]
+
+
+def stack_summary(f):
+    return Stack.from_dict(f["stack"]).summary() if f.get("stack") else None
+
+
+def extend_stack(f, seq, last, px, py, notify):
+    """Add frame `last` to a follow-up's stack at its predicted position
+    (px, py). A candidate that passed the page gates, is unreported and
+    hasn't had a REPORT page yet gets one when its stack reaches REAL_Z:
+    a .report.json beside the alert, a log record, and the notify command.
+    (The comet of 2026-11-02 alerted 10:32 at a weak stack and faded at
+    12:01; the stack along its chain was there to read all along.)"""
+    st = Stack.from_dict(f["stack"])
+    if st.add_frame(seq.significance(last), px, py, seq.times[last]):
+        f["stack"] = st.to_dict()
+    z = st.z_at()
+    if f.get("report_paged") or not f.get("paged") or f.get("known") or z is None:
+        return
+    why = report_why(z, f.get("held_windows", 0))
+    if not why:
+        return
+    f["report_paged"] = True
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    lines, note = block(f["points"]) if len(f["points"]) >= 3 else (form_lines(f["track"]), "")
+    path = f["alert"].replace(".json", ".report.json")
+    summary = st.summary()
+    json.dump({"kind": "report", "track": f["track"], "report": lines, "note": note, "frames": len(f["points"]),
+               "other_instruments": f["others"], "known": None, "decided_utc": now.isoformat(timespec="seconds"),
+               "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": True,
+               "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
+               "line_score": f.get("line_score"), "on_line": f.get("on_line"), "stack": summary,
+               "held_windows": f.get("held_windows", 0), "why": why,
+               "confirmed": bool(f.get("confirmed"))}, open(path, "w"), indent=1)
+    log("report", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=why)
+    print(f"REPORT {path} ({why})", flush=True)
+    if notify:
+        try:
+            subprocess.Popen(shlex.split(notify) + [path])
+        except OSError as e:
+            print(f"notify failed: {e}", file=sys.stderr)
+
+
 def followed(c, t, pending):
     """Is candidate c at time t one of the objects already being followed?
     The follow-up knows where its comet is now, which the memory of where
@@ -741,6 +839,17 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
                 hit = reanchored(f, chains, seq.times[last], dt)
                 if hit:
                     held, velocity = hit
+        if f.get("stack"):
+            # the stack grows by this frame where the object was found
+            # (measured, else the search's chain, else predicted), and the
+            # windows the search or the follow-up has held it are counted:
+            # a candidate pages REPORT once on the stack or on persistence
+            x_, y_ = (pts[-1][1], pts[-1][2]) if pts else (held[1], held[2]) if held else (px, py)
+            f["held_windows"] = f.get("held_windows", 0) + (1 if (pts or held) else 0)
+            try:
+                extend_stack(f, seq, last, x_, y_, notify)
+            except Exception as e:
+                print(f"stack: {e}", file=sys.stderr)
         if held and not pts:
             # the search still has it: follow its position, measure nothing
             t, x, y, _ = held
@@ -772,12 +881,17 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
             f["confirmed_utc"] = now.isoformat(timespec="seconds")
             lines, note = block(f["points"])
             path = f["alert"].replace(".json", ".confirmed.json")
+            # the confirmation is the REPORT page for a candidate whose stack
+            # hadn't got there; after this the stack doesn't page again
+            already, f["report_paged"] = bool(f.get("report_paged")), True
             json.dump({"kind": "confirmed", "track": f["track"], "report": lines, "note": note,
+                       "report_paged": already,
                        "frames": len(f["points"]), "other_instruments": f["others"],
                        "known": f.get("known"), "decided_utc": now.isoformat(timespec="seconds"),
                        "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
                        "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
-                       "line_score": f.get("line_score"), "on_line": f.get("on_line")},
+                       "line_score": f.get("line_score"), "on_line": f.get("on_line"),
+                       "stack": stack_summary(f)},
                       open(path, "w"), indent=1)
             log("confirmed", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=note,
                 known=f.get("known"))
@@ -978,6 +1092,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
             "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
             "line_score": f.get("line_score"), "on_line": f.get("on_line"),
+            "stack": stack_summary(f), "report_paged": f.get("report_paged"),
             "near_lane": f.get("near_lane"),  # files from before the heading gate
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
@@ -997,7 +1112,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "confirmed_utc": (files["confirmed"] or {}).get("decided_utc"),
             "report": with_url(best_report(known, track, reps, held=r["kind"] in ("confirmed", "ended"))),
             "pictures": rendered(name) if name else None})
-    return {"instrument": INSTRUMENT.label, "measure_prefix": INSTRUMENT.measure_cmd(""),
+    return {"instrument": INSTRUMENT.label, "measure_prefix": INSTRUMENT.measure_cmd(""), "real_z": REAL_Z,
             "updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
             "open": len(chains), "longest": len(longest) if longest else 0,
             "longest_at": [longest[-1]["x"], longest[-1]["y"]] if longest else None,
@@ -1274,12 +1389,20 @@ def main():
                     on_line = line is not None and line > LINE_SCORE
                     if held or off_orbit or on_line:
                         paged = False
+                    # what's measurable already, for the follow-up and the page's form block
+                    pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
+                    # the stack along the track's line against offset copies:
+                    # the page's verdict (stackcheck); carried on by the follow-up
+                    st = track_stack(seq, ch)
+                    page_kind = page_for(paged, known_rep, st)
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
                          "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged,
                          "found_by": found_by, "orbit_rms": rms, "off_orbit": off_orbit,
-                         "line_score": line, "on_line": on_line, "revived": revived},
+                         "line_score": line, "on_line": on_line, "revived": revived,
+                         "stack": st.summary() if st else None, "page": page_kind,
+                         "report": block(pts)[0] if len(pts) >= 3 else form_lines(ch)},
                         indent=1))
                     try:
                         animation(seq, ch, stem.with_suffix(".gif"))
@@ -1305,15 +1428,14 @@ def main():
                         if revived:
                             hint += f"; back after {', '.join(revived)} faded: the search has held it {len(ch)} windows"
                         print(f"ALERT {stem}{' (' + quiet + ')' if quiet else ''}{hint}", flush=True)
-                    # follow it for a confirmed notification; start from what's
-                    # measurable already
-                    pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
+                    # follow it for a confirmed notification, and carry its stack
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
                                     "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px,
                                     "heading_deg": round(off), "paged": paged, "found_by": found_by,
                                     "orbit_rms": rms, "off_orbit": off_orbit, "line_score": line, "on_line": on_line,
-                                    "decided_utc": now_utc.isoformat(timespec="seconds")})
+                                    "decided_utc": now_utc.isoformat(timespec="seconds"),
+                                    "stack": st.to_dict() if st else None, "report_paged": page_kind == "report"})
                     if args.notify:
                         try:
                             subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])

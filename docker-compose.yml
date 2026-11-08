@@ -19,6 +19,9 @@ services:
       # For kreutz.notify (the live watcher's --notify): where alerts go.
       NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
       NTFY_TOPIC: ${NTFY_TOPIC:-}
+      # Where data/ is served (http://host:8000, or a tunnel to it): a page
+      # opens the watcher's status page when tapped. Optional.
+      KREUTZ_URL: ${KREUTZ_URL:-}
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
