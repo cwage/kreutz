@@ -82,7 +82,10 @@ def parse(lines):
         if cur is None or cur.get("done"):
             continue
         p = _POINT.match(ln)
-        if p and len(cur["fields"]) >= 5:
+        # a report with no group (Lecci's C2 comet of 2026-11-08) goes
+        # reporter, date, kind, telescope, points: the points start one
+        # field early, and telescope_of() reads the telescope from "group"
+        if p and (len(cur["fields"]) >= 5 or (len(cur["fields"]) == 4 and cur["fields"][3] in TELESCOPES)):
             cur["points"].append([f"{int(p[1]):02d}{p[2]}", float(p[3]), float(p[4])])
         elif ln in ("published", "unpublished"):
             cur["status"] = ln

@@ -286,7 +286,7 @@ def audit(since=None):
         earlier = [("alert", rec) for stem, who in matched_by.items() if who == by
                    for rec in by_stem.get(stem, []) if rec["kind"] == "alert"]
         when = timing(hits + earlier, rp[by][0] if lifted else r, rp[by][1] if lifted else pts)
-        out.append(f"{verdict} {rid} {r['reporter']} {r['group']} {r['kind']}, "
+        out.append(f"{verdict} {rid} {r['reporter']} {r.get('group') or 'no group'} {r['kind']}, "
                    f"points {pts[0][0]:%m-%d %H:%M}-{pts[-1][0]:%H:%M} "
                    f"at ({pts[0][1]:.0f},{pts[0][2]:.0f})->({pts[-1][1]:.0f},{pts[-1][2]:.0f}): {detail}"
                    + (f"; {when}" if when else ""))
