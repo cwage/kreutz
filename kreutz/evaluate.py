@@ -199,8 +199,11 @@ def swpc_canvas_to_report(t, x, y):
 # ~45 px off (an audit MISS of a comet we had); Banach's C2 comet of the
 # same day, turned back, on our alert's track to 1 px at 19:24. Converting
 # needs a frame near the report time for its roll; without one the point
-# is skipped.
-LASCO_ROLLED_REPORTERS = {"Chuck Fields", "Kristof Ujfalussy", "Eryk Banach"}
+# is skipped. Lecci's C2 report of 2026-11-08 (the C3 comet we reported
+# that day, entering C2): his first point turned back by the frame's
+# -5.81 deg lies 5 px from our C3 track carried into C2, where it read
+# 56 px off.
+LASCO_ROLLED_REPORTERS = {"Chuck Fields", "Kristof Ujfalussy", "Eryk Banach", "Vito Lecci"}
 ROLL_NEAR = timedelta(hours=1)
 _ROLL = {}
 
