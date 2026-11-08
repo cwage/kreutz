@@ -39,10 +39,12 @@ from pathlib import Path
 from .instrument import CURRENT as INSTRUMENT
 
 
-def _send(server, topic, title, lines, priority, tags):
+def _send(server, topic, title, lines, priority, tags, click=None):
     headers = {"Title": title, "Priority": priority, "Tags": tags,
                # a header can't hold newlines; ntfy turns a literal \n into one
                "Message": "\\n".join(lines)}
+    if click:
+        headers["Click"] = click  # tapping the page opens the watcher's status page
     req = urllib.request.Request(f"{server}/{topic}", data=b"", headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=60) as r:
         print(f"notified {server}: HTTP {r.status}")  # the topic is the secret; keep it out of the log
@@ -73,6 +75,10 @@ def compose(d, name):
     far = isinstance(d, dict) and (d.get("paged") is False if "paged" in d else d.get("near_lane") is False)
     if far and not confirmed:
         return None
+    # Files from a watcher that stacks (live.track_stack): the verdict is
+    # the stack's, and the page carries the evidence and the form block.
+    if isinstance(d, dict) and (d.get("kind") == "report" or "page" in d or (confirmed and "stack" in d)):
+        return verdict_page(d, who, others, confirmed)
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
     if isinstance(d, dict) and d.get("revived"):
         hint += f"; back after {', '.join(d['revived'])} faded, held {len(track)} windows by the search"
@@ -98,6 +104,62 @@ def compose(d, name):
             [f"Mover at ({c['x']:.0f},{c['y']:.0f}) {speed:.1f} px/frame, seen since "
              f"{track[0]['time'][11:16]} UTC; {hint}.", "Vet and measure:", cmd],
             "high" if not others else "default", "comet")
+
+
+def evidence(d, others):
+    """One line of what the watcher has on the object, for a page: the
+    stack, the gates, the frames held, and whether anyone has reported
+    anything nearby."""
+    bits = []
+    st = d.get("stack")
+    if st and st.get("z") is not None:
+        bits.append(f"stack z {st['z']} over {st['n']} frames (offsets {st['null_mean']}+-{st['null_std']})")
+    else:
+        bits.append("no stack yet")
+    if d.get("frames"):
+        bits.append(f"held {d['frames']} frames" + (f", {d['note']}" if d.get("note") else ""))
+    gates = []
+    if d.get("lane_px") is not None:
+        gates.append(f"lane {d['lane_px']} px")
+    if d.get("heading_deg") is not None:
+        gates.append(f"heading {d['heading_deg']} deg")
+    if d.get("orbit_rms") is not None:
+        gates.append(f"orbit rms {d['orbit_rms']}\"")
+    if gates:
+        bits.append(", ".join(gates))
+    bits.append(f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere")
+    return "; ".join(bits) + "."
+
+
+def verdict_page(d, who, others, confirmed):
+    """(title, lines, priority, tags) for a file from a watcher that
+    stacks. REPORT (urgent) when the stack reads real or the follow-up
+    confirmed the object, with the form block in the page; watching (low)
+    for a candidate that passed the gates with a weak stack; nothing for
+    a confirmation after a REPORT page already went (it's on the status
+    page) except the measured block, quietly."""
+    st = d.get("stack") or {}
+    where = f"{INSTRUMENT.label} {d['track'][0]['time'][11:16]}-{d['track'][-1]['time'][11:16]} UTC"
+    block = ["Form (" + INSTRUMENT.telescope + ", Kreutz, " + d['track'][-1]['time'][:10] + "):"] + \
+        (d.get("report") or [])
+    if d.get("kind") == "report":
+        return (f"{who}: REPORT, stack says real" if not others else f"{who}: stack says real, likely known",
+                [f"{where}. {evidence(d, others)}"] + block, "urgent" if not others else "default", "comet,clipboard")
+    if confirmed:
+        if d.get("report_paged"):
+            return (f"{who}: confirmed, measured block",
+                    [f"{where}. {evidence(d, others)}"] + block, "low", "comet,clipboard")
+        return (f"{who}: REPORT, confirmed" if not others else f"{who}: confirmed, likely known",
+                [f"{where}. {evidence(d, others)}"] + block, "urgent" if not others else "default", "comet,clipboard")
+    if d.get("page") == "report":
+        return (f"{who}: REPORT, stack says real" if not others else f"{who}: stack says real, likely known",
+                [f"{where}. {evidence(d, others)}"] + block, "urgent" if not others else "default", "comet,clipboard")
+    if d.get("page") == "watching":
+        z = f"z {st['z']}" if st.get("z") is not None else "no stack"
+        return (f"{who}: watching ({z}), no action",
+                [f"{where}. {evidence(d, others)}", "Pages REPORT if the stack gets there or five frames confirm it."],
+                "low", "eyes")
+    return None
 
 
 def held_because(d):
@@ -129,7 +191,14 @@ def post(alert_path):
     if msg is None:
         print(f"{p.name}: {held_because(d)} at the candidate stage; not notifying")
         return
-    _send(server, topic, *msg)
+    _send(server, topic, *msg, click=status_url())
+
+
+def status_url():
+    """The watcher's status page, when KREUTZ_URL names where data/ is
+    served (the web service, or a tunnel to it); else None."""
+    base = os.environ.get("KREUTZ_URL", "").rstrip("/")
+    return f"{base}/live{INSTRUMENT.tag}/status.html" if base else None
 
 
 def main():
