@@ -728,9 +728,20 @@ def extend_stack(f, seq, last, px, py, notify):
     if st.add_frame(seq.significance(last), px, py, seq.times[last]):
         f["stack"] = st.to_dict()
     z = st.z_at()
-    if f.get("report_paged") or not f.get("paged") or f.get("known") or z is None:
+    if f.get("report_paged") or f.get("known") or z is None:
         return
-    why = report_why(z, f.get("held_windows", 0))
+    held = f.get("held_windows", 0)
+    if f.get("paged"):
+        why = report_why(z, held)
+    elif f.get("motion_ok") and z >= REAL_Z and held >= HELD_WINDOWS:
+        # The orbit and line holds are for three-window coincidences, which
+        # don't persist: a candidate moving like a sungrazer that the search
+        # has held HELD_WINDOWS windows with a stack that reads real pages
+        # REPORT despite them. (The comet of 2026-11-09 01:45 fit no family
+        # orbit, 2369", and stacked to z 31 over the morning.)
+        why = f"held {held} windows after the alert, stack z {z:.1f} reads real; the alert was held ({f.get('held_why')})"
+    else:
+        why = None
     if not why:
         return
     f["report_paged"] = True
@@ -895,7 +906,13 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
         if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
             why = unlikely(f["points"], field, seq.shape[0] if field is not None else FRAME_ROWS)
             if why:
-                remember(seen(f)[-1], f"auto: {why}")
+                # A crooked line of faint points is the one rejection that can be
+                # wrong (the comet of 2026-11-09 01:45, 2-3 sigma a frame, 3.1 px
+                # over 5): remembered as the alert, so a chain the search goes on
+                # holding revives it (REVIVE); stationary or against the flow stays
+                # a veto.
+                remember(seen(f)[-1], f"alert: {Path(f['alert']).stem}" if why.startswith("straight-line")
+                         else f"auto: {why}")
                 log("rejected", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=why)
                 print(f"REJECTED {f['alert']} ({len(f['points'])} frames, {why})", flush=True)
                 continue
@@ -1403,6 +1420,7 @@ def main():
                     px = round(lane_px(field, c["x"], c["y"], seq.shape[0]))
                     off, speed = sunward(c, sun_xy)
                     paged = pageworthy(c, sun_xy)
+                    motion_ok = paged  # heading and speed alone, before the orbit and line holds
                     found_by = "orbit" if all(k.get("found_by") == "orbit" for k in ch) else None
                     held = found_by and paged and not args.orbit_pages
                     # the orbit search's own tracks are on a Kreutz orbit already
@@ -1431,6 +1449,10 @@ def main():
                         animation(seq, ch, stem.with_suffix(".gif"))
                     except Exception as e:
                         print(f"{t:%H:%M} animation failed: {e}", file=sys.stderr)
+                    quiet = None if paged else "found by the orbit search only, not paged" if held \
+                        else f"fits no Kreutz orbit ({rms}\"), not paged" if off_orbit \
+                        else f"a line runs through it ({line:.1f}), not paged" if on_line \
+                        else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                     if known_rep:
                         remember(c, f"reported: {who(known_rep)}")
                         log("reported", ch, now_utc, report=who(known_rep), how=known_rep["how"],
@@ -1439,10 +1461,6 @@ def main():
                               f"already reported ({who(known_rep)}, by {known_rep['how']})", file=sys.stderr)
                     else:
                         remember(c, f"alert: {stem.name}")
-                        quiet = None if paged else "found by the orbit search only, not paged" if held \
-                            else f"fits no Kreutz orbit ({rms}\"), not paged" if off_orbit \
-                            else f"a line runs through it ({line:.1f}), not paged" if on_line \
-                            else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                         log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
                             reports_checked=reps is not None, others=others, lane_px=px,
                             heading_deg=round(off), paged=paged, note=quiet)
@@ -1458,7 +1476,10 @@ def main():
                                     "heading_deg": round(off), "paged": paged, "found_by": found_by,
                                     "orbit_rms": rms, "off_orbit": off_orbit, "line_score": line, "on_line": on_line,
                                     "decided_utc": now_utc.isoformat(timespec="seconds"),
-                                    "stack": st.to_dict() if st else None, "report_paged": page_kind == "report"})
+                                    "stack": st.to_dict() if st else None, "report_paged": page_kind == "report",
+                                    "motion_ok": motion_ok, "held_why": quiet if not paged else None,
+                                    # a revived alert's object has been held by the search already
+                                    "held_windows": len(ch) if revived else 0})
                     if args.notify:
                         try:
                             subprocess.Popen(shlex.split(args.notify) + [str(stem.with_suffix(".json"))])
