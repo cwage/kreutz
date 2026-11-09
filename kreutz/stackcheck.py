@@ -55,7 +55,10 @@ def peak(sig, x, y, r=R):
     r0, c0 = int(round(H - 1 - y)), int(round(x))
     if not (r <= r0 < H - r and r <= c0 < W - r):
         return np.nan
-    return float(np.nanmax(sig[r0 - r:r0 + r + 1, c0 - r:c0 + r + 1]))
+    win = sig[r0 - r:r0 + r + 1, c0 - r:c0 + r + 1]
+    if not np.isfinite(win).any():  # off the detector (occulter, corners): no warning, no value
+        return np.nan
+    return float(np.nanmax(win))
 
 
 class Stack:
