@@ -131,10 +131,14 @@ INSTRUMENTS = {
                         "https://services.swpc.noaa.gov/products/ccor1/fits/",
                         "SWFO/GOES-19/CCOR-1/ccor1-l1b", False, False,
                         # see search.py: all 81 Kreutz tracks of Jul-Aug 2025
-                        460, 1250, 0, 75, (1005.7, 957.1), True, 25, 4,
+                        # The sector follows the season's lane (angle_center None,
+                        # lane.season_sector): the lane swings right round the Sun
+                        # over a year (-11 deg in September, -50 in November, -124
+                        # in December, -168 in March, by the 2025-26 reports).
+                        460, 1250, None, 75, (1005.7, 957.1), True, 25, 4,
                         # Reported Kreutz comets: 5th percentile 4.3 px/frame; the
                         # slowest real alert so far 4.1.
-                        4.0, 12),
+                        4.0, 12, season_days=15),
     # The feed carries CCOR-2 at level 1A only, and NCEI's archive prefix
     # (SWFO/SWFO-L1/CCOR-2/) is empty as of 2026-10-20; the feed's ~30
     # days of frames are the only source. Outside the magnetosphere at L1
@@ -157,7 +161,12 @@ INSTRUMENTS = {
                         # The sector is 20 deg either side: the extremes are 12
                         # off center, and at -66 deg (below the lane, near the
                         # bottom edge) stray-light striping stacked into tracks.
-                        400, 1250, -37, 20, (1006.3, 985.4), False, 14,
+                        # By November the lane had moved to -50..-75 (Banach's comet
+                        # of 2026-11-09 at -65 was never searched), so the sector
+                        # follows the season's lane (angle_center None), from the
+                        # reports of the last month or so (season_days; CCOR-2 has
+                        # one year of them).
+                        400, 1250, None, 20, (1006.3, 985.4), False, 14,
                         # CCOR-2's bright stars leave a ring of +2.5 sigma at 4-8 px
                         # after the star model (CCOR-1's leave nothing there):
                         # 14 of 22 unexplained tracks on 2026-10-16 were 7-12 px
@@ -167,7 +176,7 @@ INSTRUMENTS = {
                         2.5,
                         # The lane runs ~700 px at 3-10 px/frame (CCOR-1: ~700 at
                         # 9-12), so about twice CCOR-1's passage.
-                        20),
+                        20, season_days=30),
     # sun_xy is CRPIX, which the level 0.5 headers hold fixed and which
     # lasco.load rotates about. Measured on the 2024-01..2026-10 Kreutz
     # reports (less those their reporter retracted within a day): C2's 479

@@ -874,7 +874,7 @@ def test_seasonal_lane_takes_the_season_and_widens_where_thin(monkeypatch):
     # Jan 1: two within 15 days, so the window doubles and still has two,
     # then doubles again (60 days) and stops there
     assert len(lane.season_samples(S, datetime(2027, 1, 1))) == 2
-    monkeypatch.setattr(lane, "INSTRUMENT", INSTRUMENTS["ccor1"])
+    monkeypatch.setattr(lane, "INSTRUMENT", replace(INSTRUMENTS["ccor1"], season_days=None))
     assert lane.season_samples(S, datetime(2026, 9, 15)) == S  # one lane all year
 
 
@@ -887,7 +887,7 @@ def test_season_sector_follows_the_samples_and_ignores_strays(monkeypatch):
     angs = np.radians(np.linspace(-50, -30, 30))
     S = [[500 + 300 * np.cos(a), 500 - 300 * np.sin(a), 0, 0, 0, "2026-09-15T00:00:00"] for a in angs]
     S += [[500, 200, 0, 0, 0, "2026-09-15T00:00:00"]] * 3
-    monkeypatch.setattr(lane, "lane_samples", lambda: S)
+    monkeypatch.setattr(lane, "lane_samples", lambda when=None: S)
     center, half = lane.season_sector(datetime(2026, 9, 15), sun)
     assert abs(center + 40) < 1 and abs(half - (10 + lane.SECTOR_MARGIN)) < 1
 
@@ -1628,3 +1628,44 @@ def test_lane_match_only_while_the_other_comet_can_still_arrive():
     assert not live.still_arriving(got["report_cw_20261108134440"], first)
     assert live.still_arriving(got["r2"], first) and live.still_arriving(got["r3"], first)
     assert live.still_arriving({"telescope": "C3"}, first)  # an old record without the field: as before
+
+
+def test_lane_samples_topped_up_from_reports_and_sector_follows(monkeypatch, tmp_path):
+    from kreutz import lane, lanesamples
+    f = tmp_path / "lane-samples-x.json"
+    old = [[1800.0, 1700.0, -3.0, -3.0, 12, "2026-10-01T00:00:00"], [1700.0, 1600.0, -3.0, -3.0, 12, "2026-10-16T00:00:00"]]
+    f.write_text(json.dumps(old))
+    monkeypatch.setattr(type(lane.INSTRUMENT), "lane_samples", property(lambda self: f))
+    fresh = [[1400.0, 1780.0, -4.0, -5.0, 0, "2026-11-05T02:30:00"], [1300.0, 1500.0, -4.0, -5.0, 0, "2026-10-10T00:00:00"],
+             [1200.0, 1400.0, -4.0, -5.0, 0, "2025-12-10T00:00:00"]]
+    monkeypatch.setattr(lanesamples, "from_reports", lambda quiet=False: fresh)
+    monkeypatch.setattr(lane, "_SAMPLES", {})
+    got = lane.lane_samples(datetime(2026, 11, 9))
+    assert got == old + [fresh[0], fresh[2]]  # report points from outside the file's span: after it, and earlier years
+    assert lane.lane_samples(datetime(2026, 11, 9)) is got  # cached for the day
+    # the sector from samples: centred on them, SECTOR_MARGIN either side of their spread
+    monkeypatch.setattr(lane, "INSTRUMENT", replace(lane.INSTRUMENT, season_days=None))
+    monkeypatch.setattr(lane, "_SAMPLES", {})
+    monkeypatch.setattr(lanesamples, "from_reports", lambda quiet=False: [])
+    sun = (1006.3, 985.4)
+    ring = [[sun[0] + 800 * np.cos(np.radians(a)), sun[1] - 800 * np.sin(np.radians(a)), -4.0, -4.0, 0, "2026-11-01T00:00:00"]
+            for a in np.linspace(-70, -50, 41)]
+    f.write_text(json.dumps(ring))
+    center, half = lane.season_sector(datetime(2026, 11, 9), sun)
+    assert center == pytest.approx(-60, abs=1.0) and half == pytest.approx(10 + lane.SECTOR_MARGIN, abs=1.5)
+
+
+def test_reports_refresh_appends_only_new(monkeypatch, tmp_path):
+    from kreutz import reports
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "old.jsonl").write_text(json.dumps({"id": "report_aa_20261101000000"}) + "\n")
+    monkeypatch.setattr(reports, "DATA", tmp_path)
+    monkeypatch.setattr(reports, "RECENT", tmp_path / "reports" / "recent.jsonl")
+    pages = {0: [{"id": "report_bb_20261109000000", "points": []}, {"id": "report_aa_20261101000000", "points": []}],
+             1: [{"id": "report_cc_20261108000000", "points": []}]}
+    monkeypatch.setattr(reports, "_fetch", lambda page: page)
+    monkeypatch.setattr(reports, "parse", lambda page: pages[page])
+    assert reports.refresh(pages=2) == 2
+    assert reports.refresh(pages=2) == 0  # idempotent
+    ids = [json.loads(ln)["id"] for ln in (tmp_path / "reports" / "recent.jsonl").read_text().splitlines()]
+    assert ids == ["report_bb_20261109000000", "report_cc_20261108000000"]

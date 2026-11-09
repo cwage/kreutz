@@ -399,6 +399,12 @@ def loop(digest_at=None):
         last = json.loads(DIGEST_STATE.read_text()).get("sent") if DIGEST_STATE.exists() else None
         last = datetime.fromisoformat(last) if last else None
         if digest_at and now.time() >= digest_at and (last is None or last.date() < now.date()):
+            try:  # this month's reports into the archive: the lanes follow them (lane.lane_samples)
+                from .reports import refresh
+                n = refresh()
+                print(f"reports: {n} new in the archive", flush=True)
+            except Exception as e:
+                print(f"reports refresh: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             title, lines = digest(last or now - timedelta(days=1), now)
             topic = os.environ.get("NTFY_TOPIC")
             try:

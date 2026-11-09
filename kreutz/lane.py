@@ -18,6 +18,7 @@ The band searched is everywhere within BAND_PX of a sample.
 """
 
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -55,17 +56,38 @@ def field_or_none(shape, when=None):
         return None
 
 
-_SAMPLES = []
+_SAMPLES = {}
 
 
-def lane_samples():
-    """The instrument's lane samples file, read once."""
-    if not _SAMPLES:
+def lane_samples(when=None):
+    """The instrument's lane samples: the file's (archive-search tracks),
+    topped up with the points of the Kreutz reports from outside the span
+    the file covers, earlier years and the weeks since (lanesamples.from_reports,
+    from the report archive in data/reports, which the audit loop
+    refreshes daily); within the span the file's tracks are the better
+    samples. The lane swings
+    right round the Sun over a year (CCOR-1's reports: -11 deg in
+    September, -50 in November, -124 in December, -168 in March), and a
+    file built from one season's archive runs goes stale: CCOR-2's ended
+    on 2026-10-16 at -37 deg, and Banach's comet of 2026-11-09 came in at
+    -65, outside the sector made from it. Re-read once a day."""
+    key = when.date() if when is not None else None
+    if key not in _SAMPLES:
         f = INSTRUMENT.lane_samples
         if not f.exists():
             raise FileNotFoundError(f"no Kreutz lane for {INSTRUMENT.label} yet: {f.name} is missing")
-        _SAMPLES.append(json.load(open(f)))
-    return _SAMPLES[0]
+        samples = json.load(open(f))
+        times = [s[5] for s in samples if len(s) > 5]
+        oldest, newest = (min(times), max(times)) if times else ("9", "")
+        try:
+            from .lanesamples import from_reports  # (lanesamples imports this module)
+            fresh = [s for s in from_reports(quiet=True) if not oldest <= s[5] <= newest]
+        except Exception as e:  # the archive is a convenience; the file alone is a lane
+            print(f"lane: report samples unavailable ({e})", file=sys.stderr)
+            fresh = []
+        _SAMPLES.clear()
+        _SAMPLES[key] = samples + fresh
+    return _SAMPLES[key]
 
 
 # A season's lane needs this many samples; where the reports are thin
@@ -108,7 +130,7 @@ def season_sector(when, sun_xy):
     of the Sun, for search._roi, from the season's lane samples around
     `when`; None without samples (search the whole annulus)."""
     try:
-        S = np.array([s[:2] for s in season_samples(lane_samples(), when)], dtype=float)
+        S = np.array([s[:2] for s in season_samples(lane_samples(when), when)], dtype=float)
     except FileNotFoundError:
         return None
     if len(S) == 0:
@@ -127,7 +149,7 @@ def build_field(shape, samples=None, when=None):
     the instrument's, and for one whose lane moves with the seasons
     (season_samples) those of the season around `when`."""
     if samples is None:
-        samples = lane_samples()
+        samples = lane_samples(when)
     samples = season_samples(samples, when)
     if not samples:
         raise FileNotFoundError(f"no {INSTRUMENT.label} lane samples within {INSTRUMENT.season_days} days "

@@ -157,6 +157,34 @@ def collect(start, end):
     return out
 
 
+RECENT = DATA / "reports" / "recent.jsonl"
+
+
+def refresh(pages=2):
+    """Append the reports on the newest `pages` listing pages that the
+    archive (data/reports/*.jsonl) doesn't have to data/reports/recent.jsonl,
+    so the lane samples (lane.lane_samples) and the audit see this month's
+    comets without anyone running kreutz.reports. Returns how many were new."""
+    have = set()
+    for p in (DATA / "reports").glob("*.jsonl"):
+        for ln in open(p):
+            try:
+                have.add(json.loads(ln)["id"])
+            except (ValueError, KeyError):
+                continue
+    new = []
+    for page in range(pages):
+        for r in parse(_fetch(page)):
+            if r["id"] not in have:
+                have.add(r["id"])
+                new.append(r)
+    if new:
+        RECENT.parent.mkdir(parents=True, exist_ok=True)
+        with open(RECENT, "a") as fh:
+            fh.write("".join(json.dumps(r) + "\n" for r in new))
+    return len(new)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("start", help="YYYY-MM-DD")
