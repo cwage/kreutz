@@ -233,8 +233,12 @@ is written with the report block ready for Sungrazer's form.
   stack reads real (below), when the follow-up has measured it in five
   frames on a straight line (`confirmed`), or when the search or the
   follow-up has held it `HELD_WINDOWS` (6) windows after the alert with a
-  positive stack. One REPORT per object; a confirmation after it is a quiet
-  page with the measured block.
+  positive stack. A candidate the orbit or line gate held at the alert
+  still pages REPORT once the search has held it that long with a stack
+  that reads real: those gates are for three-window coincidences, which
+  don't persist (the comet of 2026-11-09 01:45 fit no family orbit and
+  stacked to z 31 over the morning). One REPORT per object; a confirmation
+  after it is a quiet page with the measured block.
 - `watching` (low): a candidate that passed the page gates but whose stack
   is still weak. No action; it pages REPORT if it gets there.
 - `known comet` (low, at confirmation): matched to somebody's report.

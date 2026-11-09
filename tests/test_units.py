@@ -1669,3 +1669,38 @@ def test_reports_refresh_appends_only_new(monkeypatch, tmp_path):
     assert reports.refresh(pages=2) == 0  # idempotent
     ids = [json.loads(ln)["id"] for ln in (tmp_path / "reports" / "recent.jsonl").read_text().splitlines()]
     assert ids == ["report_bb_20261109000000", "report_cc_20261108000000"]
+
+
+def test_persistence_with_a_real_stack_lifts_an_orbit_hold(monkeypatch, tmp_path):
+    from kreutz import stackcheck
+    t0 = datetime(2026, 11, 9, 1, 0, 25)
+    track = [{"time": (t0 + timedelta(minutes=15) * k).isoformat(), "x": 200.0 - 2 * k, "y": 160.0 - 1.5 * k,
+              "vx": -2.0, "vy": -1.5, "per_frame": [1] * 4} for k in (3, 4, 5)]
+    where = stackcheck.line_through(track)
+    seq = _noisy_seq(t0, 16, source=where)
+    st = live.track_stack(seq, track)
+    monkeypatch.setattr(live, "LIVE", tmp_path)
+    (tmp_path / "alerts").mkdir()
+    alert = tmp_path / "alerts" / "held.json"
+    alert.write_text("{}")
+    sent = []
+    monkeypatch.setattr(live.subprocess, "Popen", lambda cmd: sent.append(cmd))
+    f = {"alert": str(alert), "track": track, "others": [], "known": None, "points": [], "t": datetime.fromisoformat(track[-1]["time"]),
+         "x": 190.0, "y": 152.5, "vx": -2.0, "vy": -1.5, "misses": 0, "paged": False, "motion_ok": True,
+         "held_why": 'fits no Kreutz orbit (2369"), not paged', "stack": st.to_dict(), "report_paged": False, "held_windows": 0}
+    for k, i in enumerate(range(6, 16)):
+        x, y = where(seq.times[i])
+        f["held_windows"] = k + 1
+        live.extend_stack(f, seq, i, x, y, "python -m kreutz.notify")
+        assert f["report_paged"] is (k + 1 >= live.HELD_WINDOWS)  # the stack reads real from the start here
+    assert len(sent) == 1
+    rep = json.loads(alert.with_name("held.report.json").read_text())
+    assert "the alert was held" in rep["why"] and "no Kreutz orbit" in rep["why"]
+    # a held candidate whose stack never reads real stays silent however long it's held
+    g = dict(f, alert=str(alert.with_name("weak.json")), report_paged=False, stack=stackcheck.Stack().to_dict())
+    g["stack"]["offs"] = st.to_dict()["offs"]
+    monkeypatch.setattr(live, "REAL_Z", 1000.0)
+    for i in range(6, 16):
+        g["held_windows"] = 20
+        live.extend_stack(g, _noisy_seq(t0, 16), i, 50.0, 50.0, "python -m kreutz.notify")
+    assert g["report_paged"] is False and len(sent) == 1

@@ -143,8 +143,9 @@ def verdict_page(d, who, others, confirmed):
     block = ["Form (" + INSTRUMENT.telescope + ", Kreutz, " + d['track'][-1]['time'][:10] + "):"] + \
         (d.get("report") or [])
     if d.get("kind") == "report":
+        why = [d["why"]] if d.get("why") else []
         return (f"{who}: REPORT, stack says real" if not others else f"{who}: stack says real, likely known",
-                [f"{where}. {evidence(d, others)}"] + block, "urgent" if not others else "default", "comet,clipboard")
+                [f"{where}. {evidence(d, others)}"] + why + block, "urgent" if not others else "default", "comet,clipboard")
     if confirmed:
         if d.get("report_paged"):
             return (f"{who}: confirmed, measured block",
