@@ -36,6 +36,7 @@ def main():
                     help="field value that maps to white; default: the 90th percentile of what the preset pinned")
     ap.add_argument("--smooth", type=float, default=None, help="gaussian sigma in px instead of the preset's")
     ap.add_argument("--fps", type=int, default=7)
+    ap.add_argument("--zoom", type=int, default=1, help="enlarge the frames this many times (Lanczos) before marking")
     args = ap.parse_args()
     p = dict(style.PRESETS[args.preset])
     if args.smooth is not None:
@@ -52,7 +53,7 @@ def main():
     top = args.top_value or (float(np.percentile(over_all, 90)) if over_all.size else hi)
     print(f"sky stretch {lo:.3g}..{hi:.3g} -> 0..{args.top}; headroom {hi:.3g}..{top:.3g} -> {args.top}..255 "
           f"({top / hi:.0f}x the old white)")
-    out = args.render / f"style-{args.preset}" / "field-headroom"
+    out = args.render / f"style-{args.preset}" / ("field-headroom" if args.zoom == 1 else f"field-headroom-x{args.zoom}")
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("*.png"):
         old.unlink()
@@ -63,10 +64,13 @@ def main():
         if top > hi:
             img[over] = args.top + (255 - args.top) * np.clip((a[over] - hi) / (top - hi), 0, 1)
         img8 = np.where(np.isfinite(a), img, 255).astype(np.uint8)[::-1]  # display north up like the preset
-        im = Image.fromarray(img8).convert("RGB")
+        im = Image.fromarray(img8)
+        if args.zoom > 1:
+            im = im.resize((im.width * args.zoom, im.height * args.zoom), Image.LANCZOS)
+        im = im.convert("RGB")
         if p["mark"]:
             rr = a.shape[0] - 1 - ((hdr["NFULLROW"] - 1 - ys[k]) - r0)
-            im = style.crosshair(im, xs[k] - c0, rr)
+            im = style.crosshair(im, (xs[k] - c0) * args.zoom, rr * args.zoom, args.zoom)
         style.stamp(im, f"{times[k][:10]} {times[k][11:16]} UTC", 255)
         im.save(out / f"{k:03d}.png")
     mp4 = out.with_suffix(".mp4")
