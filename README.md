@@ -79,14 +79,21 @@ so the detector runs on them, and they go to `data/ccor2/l1a/`
 while its runs, cache and live state get a `-ccor2` suffix, so both
 instruments share one checkout and one `data/`. What doesn't carry over
 is everything measured on CCOR-1. The search sector (`instrument.py`) is
-CCOR-2's own, from the 73 CCOR-2 Kreutz reports of Jul-Oct 2026: the lower
-right of the Sun rather than the right, and 20 degrees either side of
-the lane's center rather than 75: the reports span 12, and the stray-light
-striping below the lane near the bottom edge stacks into tracks. The
-Kreutz lane is built from
-archive runs with `kreutz.lanesamples` and saved as
-`kreutz/lane-samples-ccor2.json`; `kreutz.live` and `--lane` refuse to run
-without one. The SWPC feed carries CCOR-2 at level 1A only and NOAA's
+CCOR-2's own: the lower right of the Sun rather than the right. The lane
+swings right round the Sun over a year (CCOR-1's reports: -11 degrees in
+September, -50 in November, -124 in December, -168 in March), so on both
+CCORs, as on LASCO, the search sector and the lane field come from the
+season's samples (`season_days` in `instrument.py`, `lane.season_sector`):
+the samples file's archive-search tracks (`kreutz.lanesamples` over archive
+runs, saved as `kreutz/lane-samples-ccor2.json`; `kreutz.live` and `--lane`
+refuse to run without one), topped up with the points of every Kreutz
+report newer than the file's last sample (`lanesamples.from_reports`, from
+`data/reports`, which the audit loop refreshes from the site once a day).
+A fixed sector went stale: CCOR-2's, from the Jul-Oct 2026 reports at
+-37 degrees, never searched where Banach's comet of 2026-11-09 came in at
+-65. The sector is the samples' spread plus 15 degrees either side, so
+below the lane the stray-light striping near the bottom edge, which stacks
+into tracks, is partly inside it; the line gate holds those. The SWPC feed carries CCOR-2 at level 1A only and NOAA's
 archive has none yet, so the feed's rolling ~30 days are the only frames;
 `kreutz.sync --loop` keeps them from aging out. Level 1A isn't cleaned of
 particle hits, and at L1 there are many (five times CCOR-1's count of

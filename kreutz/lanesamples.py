@@ -60,7 +60,7 @@ def samples(runs, threshold, link, min_score):
 SUNWARD_MAX = 60.0
 
 
-def from_reports():
+def from_reports(quiet=False):
     """[x, y, vx, vy, 0, time] for every point of the instrument's Kreutz
     reports with two or more points, in time order."""
     from datetime import date
@@ -87,7 +87,8 @@ def from_reports():
             continue
         n += 1
         out += [[x, y, round(vx, 2), round(vy, 2), 0, t.isoformat(timespec="seconds")] for t, x, y in pts]
-    print(f"{INSTRUMENT.label}: {len(out)} points from {n} Kreutz reports", file=sys.stderr)
+    if not quiet:
+        print(f"{INSTRUMENT.label}: {len(out)} points from {n} Kreutz reports", file=sys.stderr)
     return sorted(out, key=lambda s: s[5])
 
 
