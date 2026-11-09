@@ -414,6 +414,28 @@ def other_instruments(track, reps):
                         datetime.fromisoformat(track[-1]["time"]))
 
 
+# A lane track is taken for another instrument's reported comet (how
+# "time+lane") only while that comet can still be arriving here: its
+# newest reported point no longer ago than this. other_kreutz lists C3
+# reports from a day back as context, but a comet reported in C3 is in C2
+# or CCOR within ~10 h of its points, and the other cameras see it at
+# about the same time as we would. The C2 track of 2026-11-09 12:12 was
+# filed as the C3 comet reported 21 h earlier, which had gone behind the
+# occulter at midnight; a real newcomer would have been silenced the same
+# way, and now LASCO pages.
+LANE_MATCH_BEFORE = {"C3": timedelta(hours=10)}
+LANE_MATCH_DEFAULT = timedelta(hours=3)
+
+
+def still_arriving(o, t_first):
+    """Could the comet of other-instrument report `o` be the track that
+    starts at t_first? (True for an old record without "last_utc".)"""
+    last = o.get("last_utc")
+    if not last:
+        return True
+    return t_first - datetime.fromisoformat(last) <= LANE_MATCH_BEFORE.get(o["telescope"], LANE_MATCH_DEFAULT)
+
+
 CONFIRM_LOST = 3  # consecutive frames without the object before a candidate is dropped
 PAGE_HEADING = 20  # deg off straight at the Sun: a candidate pointed farther off than this isn't paged
 ORBIT_GATE = INSTRUMENT.key == "ccor1"  # pages want a Kreutz orbit fit too (see the module notes)
@@ -1369,7 +1391,8 @@ def main():
                     # in view: the same object. Not the other CCOR's, though:
                     # reported_by has tested those by orbit, and no match there
                     # means a different comet, which mustn't go unpaged.
-                    by_time = [o for o in others if o["telescope"] not in {i.telescope for i in OTHER_CCOR}]
+                    by_time = [o for o in others if o["telescope"] not in {i.telescope for i in OTHER_CCOR}
+                               and still_arriving(o, datetime.fromisoformat(ch[0]["time"]))]
                     if not known_rep and by_time and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
                         known_rep = dict(by_time[0], how="time+lane")
                     # Known or not, the track gets an alert file, a vetting

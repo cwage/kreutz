@@ -1612,3 +1612,19 @@ def test_audit_follows_the_watcher_s_revival_links(tmp_path):
     assert audit.pager(tmp_path) is None
     (tmp_path / "status.json").write_text(json.dumps({"notify": False}))
     assert audit.pager(tmp_path) is False
+
+
+def test_lane_match_only_while_the_other_comet_can_still_arrive():
+    # Lecci's C2 points of 2026-11-08 18:36-19:12; a C3 report 21 h old is not
+    # this track, a C3 report 5 h old could be, a CCOR-2 report 2 h old could be
+    first = datetime(2026, 11, 9, 11, 48, 22)
+    c3_old = {"reporter": "Chris Wage", "id": "report_cw_20261108134440", "telescope": "C3", "group": "Kreutz",
+              "kind": "Potential Comet", "posted_utc": "2026-11-08T18:44:40Z",
+              "points": [["1330", 591.0, 652.0], ["1454", 582.0, 639.0]]}
+    c3_new = dict(c3_old, id="r2", posted_utc="2026-11-09T08:00:00Z", points=[["0630", 600.0, 660.0]])
+    ccor2 = dict(c3_old, id="r3", telescope="CCOR2", posted_utc="2026-11-09T11:00:00Z", points=[["0945", 1500.0, 1600.0]])
+    got = {o["id"]: o for o in evaluate.other_kreutz([c3_old, c3_new, ccor2], first, first + timedelta(minutes=24))}
+    assert got["report_cw_20261108134440"]["last_utc"] == "2026-11-08T14:54:00"
+    assert not live.still_arriving(got["report_cw_20261108134440"], first)
+    assert live.still_arriving(got["r2"], first) and live.still_arriving(got["r3"], first)
+    assert live.still_arriving({"telescope": "C3"}, first)  # an old record without the field: as before
