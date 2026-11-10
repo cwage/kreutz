@@ -266,7 +266,11 @@ def lane_field(when):
     instrument whose lane moves with the seasons, lane.season_samples)."""
     key = when.date() if INSTRUMENT.season_days else None
     if key not in _FIELD:
-        _FIELD.clear()
+        # The main loop asks for today's and reported_by() for the frame's
+        # date: after midnight, or over backfilled frames, both at once.
+        # Keeping one entry had them evicting each other every call.
+        if len(_FIELD) > 8:
+            _FIELD.clear()
         _FIELD[key] = build_field((FRAME_ROWS, FRAME_COLS), when=when)  # lane.py: the instrument's samples
     return _FIELD[key]
 

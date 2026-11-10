@@ -1640,12 +1640,20 @@ def test_lane_samples_topped_up_from_reports_and_sector_follows(monkeypatch, tmp
              [1200.0, 1400.0, -4.0, -5.0, 0, "2025-12-10T00:00:00"]]
     monkeypatch.setattr(lanesamples, "from_reports", lambda quiet=False: fresh)
     monkeypatch.setattr(lane, "_SAMPLES", {})
+    monkeypatch.setattr(lane, "_REPORT_SAMPLES", {})
     got = lane.lane_samples(datetime(2026, 11, 9))
     assert got == old + [fresh[0], fresh[2]]  # report points from outside the file's span: after it, and earlier years
     assert lane.lane_samples(datetime(2026, 11, 9)) is got  # cached for the day
+    other = lane.lane_samples(datetime(2026, 11, 8))  # another date: another entry, the first kept
+    assert other is not got and lane.lane_samples(datetime(2026, 11, 9)) is got
+    calls = []
+    monkeypatch.setattr(lanesamples, "from_reports", lambda quiet=False: calls.append(1) or fresh)
+    lane.lane_samples(datetime(2026, 11, 7))
+    assert calls == []  # the converted reports are cached per archive state, not per date
     # the sector from samples: centred on them, SECTOR_MARGIN either side of their spread
     monkeypatch.setattr(lane, "INSTRUMENT", replace(lane.INSTRUMENT, season_days=None))
     monkeypatch.setattr(lane, "_SAMPLES", {})
+    monkeypatch.setattr(lane, "_REPORT_SAMPLES", {})
     monkeypatch.setattr(lanesamples, "from_reports", lambda quiet=False: [])
     sun = (1006.3, 985.4)
     ring = [[sun[0] + 800 * np.cos(np.radians(a)), sun[1] - 800 * np.sin(np.radians(a)), -4.0, -4.0, 0, "2026-11-01T00:00:00"]
