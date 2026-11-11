@@ -1414,8 +1414,6 @@ def main():
                     # means a different comet, which mustn't go unpaged.
                     by_time = [o for o in others if o["telescope"] not in {i.telescope for i in OTHER_CCOR}
                                and still_arriving(o, datetime.fromisoformat(ch[0]["time"]))]
-                    if not known_rep and by_time and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
-                        known_rep = dict(by_time[0], how="time+lane")
                     # Known or not, the track gets an alert file, a vetting
                     # animation and a follow-up, so a reported comet is
                     # measured and pictured like any other; only the log
@@ -1434,6 +1432,12 @@ def main():
                     on_line = line is not None and line > LINE_SCORE
                     if held or off_orbit or on_line:
                         paged = False
+                    # The lane match is for a track that would page: a track a gate
+                    # holds isn't a comet by our own account, and naming it somebody's
+                    # comet misleads (the CCOR-2 streak of 2026-11-11 16:15, a line
+                    # through it, was filed as Ruan's C3 comet of that afternoon).
+                    if not known_rep and paged and by_time and in_lane(field, c["x"], c["y"], c["vx"], c["vy"], seq.shape[0]):
+                        known_rep = dict(by_time[0], how="time+lane")
                     # what's measurable already, for the follow-up and the page's form block
                     pts = measure(seq, last, c["x"], c["y"], c["vx"], c["vy"], back=12, ahead=0)
                     # the stack along the track's line against offset copies:
