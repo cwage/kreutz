@@ -1712,3 +1712,24 @@ def test_persistence_with_a_real_stack_lifts_an_orbit_hold(monkeypatch, tmp_path
         g["held_windows"] = 20
         live.extend_stack(g, _noisy_seq(t0, 16), i, 50.0, 50.0, "python -m kreutz.notify")
     assert g["report_paged"] is False and len(sent) == 1
+
+
+def test_other_instrument_report_must_be_where_the_track_is(monkeypatch):
+    # our CCOR-1 track at 19 Rsun, PA -79 (2026-11-11 20:30); Ruan's C3 comet of that afternoon
+    # at 26 Rsun, PA -65 is not it; a C3 report at 20 Rsun, PA -75 could be
+    track = [{"time": "2026-11-11T20:00:25", "x": 1538.0, "y": 1765.0, "vx": -6.0, "vy": -5.0},
+             {"time": "2026-11-11T20:30:25", "x": 1526.0, "y": 1755.0, "vx": -6.0, "vy": -5.0}]
+    def place(tel, x, y, t):
+        if tel == "CCOR1":
+            return (19.2, -79.0)
+        return (np.hypot((x - 518.2) * 56, (y - 490.5) * 56) / 960, np.degrees(np.arctan2(-(y - 490.5), x - 518.2)))
+    real_place = live.sky_place
+    monkeypatch.setattr(live, "sky_place", place)
+    far = {"telescope": "C3", "last_utc": "2026-11-11T14:42:00", "last_xy": [727.0, 934.0]}   # 29 Rsun, PA -65
+    assert not live.plausible(far, track)
+    near = {"telescope": "C3", "last_utc": "2026-11-11T19:30:00", "last_xy": [600.0, 820.0]}  # ~20 Rsun, PA -76
+    assert live.plausible(near, track)
+    assert live.plausible({"telescope": "C3", "last_utc": None, "last_xy": None}, track)  # no place: by time, as before
+    # the real LASCO arithmetic: C3 (727, 934) is 29 Rsun out at PA -65
+    r, pa = real_place("C3", 727.0, 934.0, datetime(2026, 11, 11, 14, 42))
+    assert r == pytest.approx(29.0, abs=0.5) and pa == pytest.approx(-65, abs=1.5)

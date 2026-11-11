@@ -373,9 +373,12 @@ def other_kreutz(reports, t_first, t_last):
         if not times:
             times = [posted]
         if any(t0 <= ot <= t1 for ot in times):
+            newest = max(range(len(times)), key=lambda i: times[i]) if r["points"] else None
             out.append({"reporter": r["reporter"], "id": r["id"], "telescope": r["telescope"],
                         "posted_utc": r["posted_utc"], "kind": r["kind"],
-                        "last_utc": max(times).isoformat(timespec="seconds")})  # its newest observed point
+                        "last_utc": max(times).isoformat(timespec="seconds"),  # its newest observed point
+                        "last_xy": [float(r["points"][newest][1]), float(r["points"][newest][2])]
+                        if newest is not None else None})
     return sorted(out, key=lambda o: o["posted_utc"])
 
 
