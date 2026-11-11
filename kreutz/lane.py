@@ -26,6 +26,7 @@ import numpy as np
 from scipy.ndimage import binary_dilation, maximum_filter
 from scipy.spatial import cKDTree
 
+from . import DATA
 from .frames import INSTRUMENT, Sequence
 from .search import CLIP_SIGMA, FRAME_KEEP, FRAME_KEEP_FRAC, Candidate, _dedupe, window_frames
 
@@ -79,15 +80,36 @@ def lane_samples(when=None):
         samples = json.load(open(f))
         times = [s[5] for s in samples if len(s) > 5]
         oldest, newest = (min(times), max(times)) if times else ("9", "")
-        try:
-            from .lanesamples import from_reports  # (lanesamples imports this module)
-            fresh = [s for s in from_reports(quiet=True) if not oldest <= s[5] <= newest]
-        except Exception as e:  # the archive is a convenience; the file alone is a lane
-            print(f"lane: report samples unavailable ({e})", file=sys.stderr)
-            fresh = []
-        _SAMPLES.clear()
+        fresh = [s for s in _report_samples() if not oldest <= s[5] <= newest]
+        if len(_SAMPLES) > 8:  # callers ask for a few dates around today; keep them all
+            _SAMPLES.clear()
         _SAMPLES[key] = samples + fresh
     return _SAMPLES[key]
+
+
+_REPORT_SAMPLES = {}
+
+
+def _report_samples():
+    """lanesamples.from_reports() once per state of the report archive: it
+    reads two years of reports and takes a minute or more on LASCO, and
+    the live watcher asks for the lane under two dates at once (today's,
+    and a backfilled frame's) and must not pay that on every call (the C2
+    watcher of 2026-11-10 sat at a full core for hours doing so)."""
+    try:
+        sig = tuple(sorted((p.name, p.stat().st_mtime_ns) for p in (DATA / "reports").glob("*.jsonl")))
+    except OSError:
+        sig = ()
+    if sig not in _REPORT_SAMPLES:
+        try:
+            from .lanesamples import from_reports  # (lanesamples imports this module)
+            got = from_reports(quiet=True)
+        except Exception as e:  # the archive is a convenience; the file alone is a lane
+            print(f"lane: report samples unavailable ({e})", file=sys.stderr)
+            got = []
+        _REPORT_SAMPLES.clear()
+        _REPORT_SAMPLES[sig] = got
+    return _REPORT_SAMPLES[sig]
 
 
 # A season's lane needs this many samples; where the reports are thin
