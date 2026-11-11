@@ -412,10 +412,70 @@ def who(known):
     return f"{known['reporter']} {known['id']} ({known['telescope']})"
 
 
+# A report from another instrument is a candidate for the same object only
+# if its comet can be where our track is: distance from the Sun within
+# OTHER_R_SLOP solar radii plus OTHER_R_RATE per hour between its newest
+# point and our track's time (a Kreutz comet falls in at 0.5-0.9 Rsun/h
+# between 30 and 10 Rsun: the comets of 2026-11-08/09 made 0.8-0.9 inside
+# 20), and position angle within OTHER_PA_SLOP (the lane is one angle; a
+# rolled-frame reporter's raw points are ~6 deg off; the parallax between
+# GEO and L1 is small). The CCOR-1 comet of 2026-11-11 18:30 at 19 Rsun,
+# PA -79, was paged as "likely known" and the CCOR-2 sighting of it filed as
+# Ruan's, after his C3 report of a comet at 29 Rsun, PA -65, six hours
+# earlier.
+OTHER_R_SLOP = 2.0
+OTHER_R_RATE = 0.8
+OTHER_PA_SLOP = 12.0
+ARCSEC_PX = {"C2": 11.9, "C3": 56.0}  # LASCO level 0.5 (lasco.py; CCOR has a WCS per frame)
+RSUN_ARCSEC = 960.0
+
+
+def sky_place(telescope, x, y, t):
+    """(distance from the Sun in Rsun, position angle in degrees) of report
+    position (x, y) on `telescope` at t: LASCO through its Sun centre and
+    plate scale, CCOR through the nearest frame's WCS; None without one."""
+    inst = next((i for i in INSTRUMENTS.values() if i.telescope == telescope), None)
+    if inst is None:
+        return None
+    try:
+        if telescope in ARCSEC_PX:
+            sx, sy = inst.sun_xy
+            tx, ty = (x - sx) * ARCSEC_PX[telescope], -(y - sy) * ARCSEC_PX[telescope]
+        else:
+            from .orbitsearch import _frame_near, _wcs
+            path = _frame_near(inst, t)
+            if path is None:
+                return None
+            w, H, _ = _wcs(path)
+            lon, lat = w.wcs_pix2world([[x, H - 1 - y]], 0)[0]
+            tx, ty = float(lon) * 3600, float(lat) * 3600
+    except Exception as e:
+        print(f"sky place ({telescope}): {e}", file=sys.stderr)
+        return None
+    return float(np.hypot(tx, ty) / RSUN_ARCSEC), float(np.degrees(np.arctan2(ty, tx)))
+
+
+def plausible(o, track):
+    """Could other-instrument report `o`'s comet be our `track`'s object?
+    True when either place can't be had (as before: matched by time)."""
+    if not o.get("last_xy") or not o.get("last_utc"):
+        return True
+    t = datetime.fromisoformat(track[-1]["time"])
+    ours = sky_place(INSTRUMENT.telescope, track[-1]["x"], track[-1]["y"], t)
+    theirs = sky_place(o["telescope"], *o["last_xy"], datetime.fromisoformat(o["last_utc"]))
+    if ours is None or theirs is None:
+        return True
+    hours = abs((t - datetime.fromisoformat(o["last_utc"])).total_seconds()) / 3600
+    dr = abs(ours[0] - theirs[0])
+    dpa = abs((ours[1] - theirs[1] + 180) % 360 - 180)
+    return dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP
+
+
 def other_instruments(track, reps):
-    """Kreutz reports from other instruments around the track's time."""
-    return other_kreutz(reps, datetime.fromisoformat(track[0]["time"]),
-                        datetime.fromisoformat(track[-1]["time"]))
+    """Kreutz reports from other instruments around the track's time whose
+    comet could be where the track is (plausible)."""
+    return [o for o in other_kreutz(reps, datetime.fromisoformat(track[0]["time"]),
+                                    datetime.fromisoformat(track[-1]["time"])) if plausible(o, track)]
 
 
 # A lane track is taken for another instrument's reported comet (how
