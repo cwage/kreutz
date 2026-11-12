@@ -1772,3 +1772,15 @@ def test_falling_in_and_rolled_since():
     assert not evaluate.measures_rolled({"reporter": "Jiangao Ruan", "posted_utc": "2025-06-01T00:00:00Z"})
     assert evaluate.measures_rolled({"reporter": "Chuck Fields", "posted_utc": "2024-01-01T00:00:00Z"})
     assert not evaluate.measures_rolled({"reporter": "Zesheng Yang", "posted_utc": "2026-11-11T00:00:00Z"})
+
+
+def test_a_real_stack_lifts_the_orbit_hold_at_the_alert():
+    strong = types.SimpleNamespace(z_at=lambda t=None: 29.2)
+    weak = types.SimpleNamespace(z_at=lambda t=None: 5.7)
+    assert live.lifts_orbit_hold(True, True, None, False, strong)
+    assert not live.lifts_orbit_hold(True, True, None, False, weak)       # waits for persistence
+    assert not live.lifts_orbit_hold(False, True, None, False, strong)    # not held by the orbit gate
+    assert not live.lifts_orbit_hold(True, False, None, False, strong)    # doesn't move like a sungrazer
+    assert not live.lifts_orbit_hold(True, True, None, True, strong)      # a line runs through it too
+    assert not live.lifts_orbit_hold(True, True, "orbit", False, strong)  # orbit-search-only hold
+    assert not live.lifts_orbit_hold(True, True, None, False, None)
