@@ -253,7 +253,7 @@ def test_open_tracks_names_the_longest_chain():
     assert live.open_tracks([blip, comet]) == "2 open tracks (longest 3 windows, at 1860,1231)"
 
 
-def test_status_stages_and_paths():
+def test_status_stages_and_paths(monkeypatch):
     pend = {"alert": "/data/live/alerts/20261008T2215_1913_1225.json", "misses": 1, "confirmed": True,
             "track": [{"time": "2026-10-08T21:45:25", "x": 1930.0, "y": 1220.0, "vx": -8.0, "vy": 2.0}],
             "points": [(datetime(2026, 10, 8, 21, 45, 25) + timedelta(minutes=15 * i), 1930.0 - 8 * i, 1220.0 + 2 * i, 5.0)
@@ -309,6 +309,7 @@ def test_status_stages_and_paths():
     reps = [{"id": "report_eb_20261008225115", "reporter": "Eryk Banach", "telescope": "CCOR2",
              "group": "Kreutz", "kind": "Potential Comet", "posted_utc": "2026-10-09T02:51:15Z",
              "points": [["0200", 1509.0, 1398.0], ["0215", 1502.0, 1394.0], ["0230", 1496.0, 1388.0]]}]
+    monkeypatch.setattr(live, "sky_agrees", lambda o, tr: None)  # no frames to place either sighting: by time
     s = live.status([], [pend], datetime(2026, 10, 8, 23, 0, 25), [], datetime(2026, 10, 9, 4, 0), reps=reps)
     assert s["following"][0]["report"]["how"] == "time"
     assert s["following"][0]["report"]["reporter"] == "Eryk Banach"
@@ -1807,3 +1808,39 @@ def test_confirmation_of_a_held_candidate_is_not_a_report():
     assert "REPORT" not in title and prio == "low"
     title, _, prio, _ = notify.compose(dict(held, paged=True), "a.confirmed.json")
     assert title.endswith("REPORT, confirmed") and prio == "urgent"  # passed the gates: as before
+
+
+def test_status_report_by_sky_position_before_time(monkeypatch):
+    track = [{"time": "2026-11-12T00:45:14", "x": 1339.0, "y": 1833.0, "vx": -3.5, "vy": -5.0},
+             {"time": "2026-11-12T18:45:14", "x": 1100.0, "y": 1500.0, "vx": -5.0, "vy": -7.0}]
+    ruan = {"reporter": "Jiangao Ruan", "id": "r1", "telescope": "C3", "posted_utc": "2026-11-11T15:09:35Z",
+            "kind": "Potential Comet", "last_utc": "2026-11-11T14:42:00", "last_xy": [727.0, 934.0]}
+    other = dict(ruan, reporter="Y", id="r2", posted_utc="2026-11-11T12:00:00Z", last_xy=[100.0, 100.0])
+    monkeypatch.setattr(live, "reported_by", lambda *a, **k: None)
+    monkeypatch.setattr(live, "other_kreutz", lambda reps, a, b: [ruan, other])
+    verdicts = {"r1": True, "r2": False}
+    monkeypatch.setattr(live, "sky_agrees", lambda o, tr: verdicts[o["id"]])
+    got = live.matched_report(track, [{"x": 1}], held=True)
+    assert got["id"] == "r1" and got["how"] == "sky"  # Y's comet is elsewhere: not offered though earlier
+    verdicts = {"r1": None, "r2": False}
+    assert live.matched_report(track, [{"x": 1}], held=True)["how"] == "time"
+    verdicts = {"r1": False, "r2": False}
+    assert live.matched_report(track, [{"x": 1}], held=True) is None
+
+
+def test_status_finds_this_cameras_old_report_by_sky(monkeypatch):
+    track = [{"time": "2026-11-12T15:18:26", "x": 548.0, "y": 740.0, "vx": -1.5, "vy": -2.0},
+             {"time": "2026-11-12T16:30:00", "x": 540.0, "y": 720.0, "vx": -1.5, "vy": -2.0}]
+    ruan = {"id": "report_jr_20261111100935", "reporter": "Jiangao Ruan", "telescope": live.INSTRUMENT.telescope,
+            "group": "Kreutz", "kind": "Potential Comet", "posted_utc": "2026-11-11T15:09:35Z",
+            "points": [["1354", 730.0, 940.0], ["1442", 727.0, 934.0]]}
+    stale = dict(ruan, id="report_xx_1", posted_utc="2026-11-09T10:00:00Z", points=[["0900", 1.0, 1.0]])
+    got = live.own_reports([ruan, stale], datetime(2026, 11, 12, 15, 18, 26), datetime(2026, 11, 12, 16, 30))
+    assert [o["id"] for o in got] == ["report_jr_20261111100935"] and got[0]["last_utc"] == "2026-11-11T14:42:00"
+    monkeypatch.setattr(live, "reported_by", lambda *a, **k: None)
+    monkeypatch.setattr(live, "other_kreutz", lambda *a, **k: [])
+    monkeypatch.setattr(live, "sky_agrees", lambda o, tr: True)
+    m = live.matched_report(track, [ruan], held=True)
+    assert m["id"] == "report_jr_20261111100935" and m["how"] == "position"
+    monkeypatch.setattr(live, "sky_agrees", lambda o, tr: False)
+    assert live.matched_report(track, [ruan], held=True) is None
