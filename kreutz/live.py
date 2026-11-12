@@ -477,6 +477,21 @@ def plausible(o, track):
     return inward and dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP
 
 
+def unclaimed(others, pending):
+    """The other-instrument reports not already attached to an object this
+    watcher is following: a report is one comet, and a new track is by
+    construction somewhere else (followed() keeps a followed object's own
+    chains from alerting). The faint CCOR-1 comet of 2026-11-12 03:00-09:30
+    ran ~11 deg from Ruan's C3 comet, which both CCORs were following under
+    his name, and its REPORT page went out as "likely Ruan's"."""
+    taken = set()
+    for f in pending:
+        if f.get("known") and f["known"].get("id"):
+            taken.add(f["known"]["id"])
+        taken |= {o.get("id") for o in f.get("others") or ()}
+    return [o for o in others if o.get("id") not in taken]
+
+
 def other_instruments(track, reps):
     """Kreutz reports from other instruments around the track's time whose
     comet could be where the track is (plausible)."""
@@ -1482,7 +1497,7 @@ def main():
                     reps = latest_reports() or reps
                     reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     known_rep = reported_by(ch, t, reps) if reps else None
-                    others = other_instruments(ch, reps)
+                    others = unclaimed(other_instruments(ch, reps), pending)
                     # A lane track while another coronagraph has a Kreutz comet
                     # in view: the same object. Not the other CCOR's, though:
                     # reported_by has tested those by orbit, and no match there

@@ -1784,3 +1784,12 @@ def test_a_real_stack_lifts_the_orbit_hold_at_the_alert():
     assert not live.lifts_orbit_hold(True, True, None, True, strong)      # a line runs through it too
     assert not live.lifts_orbit_hold(True, True, "orbit", False, strong)  # orbit-search-only hold
     assert not live.lifts_orbit_hold(True, True, None, False, None)
+
+
+def test_a_report_attached_to_a_followed_object_is_not_offered_again():
+    ruan = {"reporter": "Jiangao Ruan", "id": "report_jr_20261111100935", "telescope": "C3"}
+    other = {"reporter": "X", "id": "report_xx_1", "telescope": "C2"}
+    pending = [{"known": None, "others": [ruan]}, {"known": {"id": "report_cw_1"}, "others": []}]
+    assert live.unclaimed([ruan, other], pending) == [other]
+    assert live.unclaimed([ruan, other], []) == [ruan, other]
+    assert live.unclaimed([{"id": "report_cw_1", "telescope": "CCOR2"}], pending) == []
