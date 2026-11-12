@@ -129,7 +129,7 @@ from PIL import Image
 
 from . import DATA, page
 from .instrument import CURRENT as INSTRUMENT, INSTRUMENTS
-from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, matches, moves, other_kreutz,
+from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, link_miss, matches, moves, other_kreutz,
                        report_points)
 from .lane import build_field, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
@@ -1394,9 +1394,8 @@ def main():
                 steps = (t - datetime.fromisoformat(prev["time"])) / FRAME
                 if not 1 <= round(steps) <= 1 + MAX_MISSING:
                     continue
-                px, py = prev["x"] + prev["vx"] * steps, prev["y"] + prev["vy"] * steps
                 for k, c in enumerate(cands):
-                    if k not in used and np.hypot(c["x"] - px, c["y"] - py) <= LINK_PX * steps \
+                    if k not in used and link_miss(prev, c, steps) <= LINK_PX * steps \
                             and np.hypot(c["vx"] - prev["vx"], c["vy"] - prev["vy"]) <= LINK_DV:
                         used.add(k)
                         grown.append(ch + [c])
