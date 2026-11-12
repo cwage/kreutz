@@ -1750,3 +1750,25 @@ def test_chain_links_an_accelerating_comet():
         by_time[t] = [dict(c, score=9.0, per_frame=[2] * 8, t=t, time=t.isoformat())]
     trs = evaluate.tracks(by_time, 6.0, link=3)
     assert len(trs) == 1 and len(trs[0]) == 3
+
+
+def test_falling_in_and_rolled_since():
+    track = [{"time": "2026-11-12T01:15:14", "x": 1331.0, "y": 1823.0, "vx": -3.5, "vy": -4.5}]
+    places = {"CCOR2": (22.6, -75.0), "CCOR1": (19.2, -78.6), "C3": (28.6, -64.8)}
+    orig = live.sky_place
+    try:
+        live.sky_place = lambda tel, x, y, t: places[tel]
+        mine = {"telescope": "CCOR1", "last_utc": "2026-11-11T20:30:00", "last_xy": [1526.0, 1755.0]}
+        ruan = {"telescope": "C3", "last_utc": "2026-11-11T14:42:00", "last_xy": [727.0, 934.0]}
+        live.INSTRUMENT, saved = types.SimpleNamespace(telescope="CCOR2"), live.INSTRUMENT
+        try:
+            assert not live.plausible(mine, track)  # nearer the Sun five hours earlier: not the same comet
+            assert live.plausible(ruan, track)       # farther out ten hours earlier: could be
+        finally:
+            live.INSTRUMENT = saved
+    finally:
+        live.sky_place = orig
+    assert evaluate.measures_rolled({"reporter": "Jiangao Ruan", "posted_utc": "2026-11-11T15:09:35Z"})
+    assert not evaluate.measures_rolled({"reporter": "Jiangao Ruan", "posted_utc": "2025-06-01T00:00:00Z"})
+    assert evaluate.measures_rolled({"reporter": "Chuck Fields", "posted_utc": "2024-01-01T00:00:00Z"})
+    assert not evaluate.measures_rolled({"reporter": "Zesheng Yang", "posted_utc": "2026-11-11T00:00:00Z"})
