@@ -215,6 +215,21 @@ def swpc_canvas_to_report(t, x, y):
 # -5.81 deg lies 5 px from our C3 track carried into C2, where it read
 # 56 px off.
 LASCO_ROLLED_REPORTERS = {"Chuck Fields", "Kristof Ujfalussy", "Eryk Banach", "Vito Lecci"}
+# Reporters seen measuring on the rolled frame only from a date: before it
+# their points agree with the north-up reporters' (the roll was near zero),
+# and converting them would need frames the archive doesn't have, so the
+# lane samples would lose them. Ruan: his C3 report of 2026-11-11 stacks to
+# z 3.0 in our maps turned by the roll and 0.2 as reported, his C2 report of
+# 11-02 to 4.4 and 1.0; over 2024-25 his position angles match the north-up
+# reporters' on the same comets (median -0.1 deg, 46 pairs).
+LASCO_ROLLED_SINCE = {"Jiangao Ruan": "2026-10-01"}
+
+
+def measures_rolled(r):
+    """Did this LASCO report's reporter measure on the rolled level 0.5 frame?"""
+    who = r.get("reporter")
+    return who in LASCO_ROLLED_REPORTERS or (who in LASCO_ROLLED_SINCE
+                                             and r.get("posted_utc", "") >= LASCO_ROLLED_SINCE[who])
 ROLL_NEAR = timedelta(hours=1)
 _ROLL = {}
 
@@ -270,7 +285,7 @@ def report_points(reports, day, inst=None):
                 if xy is None:
                     continue
                 x, y = xy
-            elif INSTRUMENT.source == "lasco" and inst is INSTRUMENT and r.get("reporter") in LASCO_ROLLED_REPORTERS:
+            elif INSTRUMENT.source == "lasco" and inst is INSTRUMENT and measures_rolled(r):
                 xy = lasco_rolled_to_report(t, x, y)
                 if xy is None:
                     continue

@@ -419,7 +419,8 @@ def who(known):
 # between 30 and 10 Rsun: the comets of 2026-11-08/09 made 0.8-0.9 inside
 # 20), and position angle within OTHER_PA_SLOP (the lane is one angle; a
 # rolled-frame reporter's raw points are ~6 deg off; the parallax between
-# GEO and L1 is small). The CCOR-1 comet of 2026-11-11 18:30 at 19 Rsun,
+# GEO and L1 is small; a rolled-frame LASCO reporter's raw points are
+# compared as given, inside that slop). The CCOR-1 comet of 2026-11-11 18:30 at 19 Rsun,
 # PA -79, was paged as "likely known" and the CCOR-2 sighting of it filed as
 # Ruan's, after his C3 report of a comet at 29 Rsun, PA -65, six hours
 # earlier.
@@ -465,10 +466,15 @@ def plausible(o, track):
     theirs = sky_place(o["telescope"], *o["last_xy"], datetime.fromisoformat(o["last_utc"]))
     if ours is None or theirs is None:
         return True
-    hours = abs((t - datetime.fromisoformat(o["last_utc"])).total_seconds()) / 3600
+    signed = (t - datetime.fromisoformat(o["last_utc"])).total_seconds() / 3600
+    hours = abs(signed)
     dr = abs(ours[0] - theirs[0])
     dpa = abs((ours[1] - theirs[1] + 180) % 360 - 180)
-    return dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP
+    # and falling in: the later sighting can't be farther from the Sun (the
+    # CCOR-2 sighting at 22.6 Rsun on 2026-11-12 01:15 was listed as likely the
+    # CCOR-1 comet reported at 19.2 Rsun five hours earlier)
+    inward = (ours[0] - theirs[0]) * (1 if signed >= 0 else -1) <= OTHER_R_SLOP
+    return inward and dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP
 
 
 def other_instruments(track, reps):
