@@ -129,7 +129,7 @@ from PIL import Image
 
 from . import DATA, page
 from .instrument import CURRENT as INSTRUMENT, INSTRUMENTS
-from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, link_miss, matches, moves, other_kreutz,
+from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, link_miss, matches, measures_rolled, moves, other_kreutz,
                        report_points)
 from .lane import build_field, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
@@ -376,6 +376,33 @@ def recheck(pending, t, reps):
 PASSAGE = timedelta(hours=INSTRUMENT.passage)  # a Kreutz comet stays in the field about this long after it's found
 
 
+OWN_BEFORE = timedelta(hours=36)
+
+
+def own_reports(reps, t_first, t_last):
+    """This camera's Kreutz reports (not retracted) whose newest point is
+    within OWN_BEFORE before t_first up to t_last, in other_kreutz's form."""
+    from .evaluate import OTHER_KINDS, retracted
+    gone = retracted(reps)
+    out = []
+    for r in reps or []:
+        if r.get("telescope") != INSTRUMENT.telescope or r.get("group") != "Kreutz" or not r.get("points") \
+                or r.get("kind") not in OTHER_KINDS or r["id"] in gone:
+            continue
+        posted = datetime.strptime(r["posted_utc"], "%Y-%m-%dT%H:%M:%SZ")
+        times = []
+        for hhmm, _, _ in r["points"]:
+            ot = posted.replace(hour=int(hhmm[:2]), minute=int(hhmm[2:]), second=0)
+            times.append(ot - timedelta(days=1) if ot > posted else ot)
+        k = max(range(len(times)), key=lambda i: times[i])
+        if t_first - OWN_BEFORE <= times[k] <= t_last:
+            out.append({"reporter": r["reporter"], "id": r["id"], "telescope": r["telescope"],
+                        "posted_utc": r["posted_utc"], "kind": r["kind"], "group": r.get("group"),
+                        "last_utc": times[k].isoformat(timespec="seconds"),
+                        "last_xy": [float(r["points"][k][1]), float(r["points"][k][2])]})
+    return out
+
+
 def matched_report(track, reps, held=False):
     """The report that fits a track, looked up after the fact (reports keep
     arriving for hours after a decision): one of our instrument's reports by position, or,
@@ -389,9 +416,24 @@ def matched_report(track, reps, held=False):
     found = reported_by(track, t_last, reps)
     if found or not held:
         return found
+    # this camera's own report of a comet we lost for a day and found again:
+    # too long ago for reported_by's extrapolation, but its place on the sky
+    # says (Ruan's C3 comet of 2026-11-11, back in our C3 25 h after his last
+    # point, read UNREPORTED)
+    mine = [o for o in own_reports(reps, datetime.fromisoformat(track[0]["time"]), t_last) if sky_agrees(o, track)]
+    if mine:
+        return dict(min(mine, key=lambda o: o["posted_utc"]), how="position")
     others = other_kreutz(reps, datetime.fromisoformat(track[0]["time"]), t_last + PASSAGE)
-    if others:
-        return dict(min(others, key=lambda o: o["posted_utc"]), how="time")
+    # another camera's report whose comet is where ours is, by sky position
+    # (how "sky"), before one that only falls in the time window ("time");
+    # one whose comet is elsewhere isn't offered at all (the status page
+    # called Ruan's comet in CCOR-2 "maybe" his C3 comet, "same time, not by
+    # position", when the two agreed on the sky to 0.1 deg)
+    judged = [(sky_agrees(o, track), o) for o in others]
+    for verdict, how in ((True, "sky"), (None, "time")):
+        fits = [o for v, o in judged if v is verdict]
+        if fits:
+            return dict(min(fits, key=lambda o: o["posted_utc"]), how=how)
     return None
 
 
@@ -456,17 +498,53 @@ def sky_place(telescope, x, y, t):
     return float(np.hypot(tx, ty) / RSUN_ARCSEC), float(np.degrees(np.arctan2(ty, tx)))
 
 
-def plausible(o, track):
-    """Could other-instrument report `o`'s comet be our `track`'s object?
-    True when either place can't be had (as before: matched by time)."""
+def _lasco_turned(telescope, t, x, y):
+    """A rolled-frame reporter's LASCO point (x, y) at t turned solar north
+    up, from the nearest frame of that camera on disk (evaluate's own
+    conversion reads this instrument's frames only); as given without one."""
+    import glob
+    from astropy.io import fits
+    best = None
+    for day in (t - timedelta(days=1), t, t + timedelta(days=1)):
+        for p in glob.glob(str(DATA / telescope.lower() / "l05" / f"{day:%Y/%m/%d}" / "*.fts")):
+            m = re.search(r"_(\d{8}T\d{6})_", p)
+            if not m:
+                continue
+            dt = abs((datetime.strptime(m[1], "%Y%m%dT%H%M%S") - t).total_seconds())
+            if dt <= 6 * 3600 and (best is None or dt < best[0]):
+                best = (dt, p)
+    if best is None:
+        return x, y
+    try:
+        h = fits.getheader(best[1], 0)
+    except Exception:
+        return x, y
+    crota, sx, sy = h["CROTA1"], h["CRPIX1"] - 1, h["NAXIS2"] - 1 - (h["CRPIX2"] - 1)
+    th = np.radians(-crota)
+    dx, dy = x - sx, y - sy
+    return float(sx + dx * np.cos(th) - dy * np.sin(th)), float(sy + dx * np.sin(th) + dy * np.cos(th))
+
+
+def sky_agrees(o, track):
+    """Is other-instrument report `o`'s comet where our `track`'s object is,
+    by sky position? True, False, or None when either place can't be had.
+    The report's newest point is compared with our point nearest it in
+    time (a followed object's track runs a day: its last point is far from
+    a report of its first hours); a rolled-frame LASCO reporter's point is
+    turned north up first."""
     if not o.get("last_xy") or not o.get("last_utc"):
-        return True
-    t = datetime.fromisoformat(track[-1]["time"])
-    ours = sky_place(INSTRUMENT.telescope, track[-1]["x"], track[-1]["y"], t)
-    theirs = sky_place(o["telescope"], *o["last_xy"], datetime.fromisoformat(o["last_utc"]))
+        return None
+    t_o = datetime.fromisoformat(o["last_utc"])
+    c = min(track, key=lambda c: abs((datetime.fromisoformat(c["time"]) - t_o).total_seconds()))
+    t = datetime.fromisoformat(c["time"])
+    x, y = o["last_xy"]
+    if o["telescope"] in ARCSEC_PX and measures_rolled(o):
+        x, y = _lasco_turned(o["telescope"], t_o, x, y)
+    ours = sky_place(INSTRUMENT.telescope, c["x"], c["y"], t)
+    theirs = sky_place(o["telescope"], x, y, t_o)
     if ours is None or theirs is None:
-        return True
-    signed = (t - datetime.fromisoformat(o["last_utc"])).total_seconds() / 3600
+        return None
+    signed = (t - t_o).total_seconds() / 3600
     hours = abs(signed)
     dr = abs(ours[0] - theirs[0])
     dpa = abs((ours[1] - theirs[1] + 180) % 360 - 180)
@@ -474,7 +552,13 @@ def plausible(o, track):
     # CCOR-2 sighting at 22.6 Rsun on 2026-11-12 01:15 was listed as likely the
     # CCOR-1 comet reported at 19.2 Rsun five hours earlier)
     inward = (ours[0] - theirs[0]) * (1 if signed >= 0 else -1) <= OTHER_R_SLOP
-    return inward and dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP
+    return bool(inward and dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP)
+
+
+def plausible(o, track):
+    """Could other-instrument report `o`'s comet be our `track`'s object?
+    True when either place can't be had (as before: matched by time)."""
+    return sky_agrees(o, track) is not False
 
 
 def unclaimed(others, pending):

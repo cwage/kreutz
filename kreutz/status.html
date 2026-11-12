@@ -100,7 +100,14 @@ const reportBadge = (k, inst) => {
     return `<span class="badge known">${link(k, `reported by ${esc(k.reporter || k.id)}${when}${what ? ` (${what})` : ''}`)}</span>`;
   }
   const here = inst ? ` in ${esc(inst.label)}` : '';
-  const hint = `maybe ${esc(k.reporter)}'s ${esc(k.telescope || 'other-instrument')} comet,${when} (same time, not by position)`;
+  // Another camera's report whose comet is where ours is on the sky: the
+  // same comet, reported elsewhere; what's open is a report from this camera
+  // (a "Known Comet Now Entering" or additional observations), not a find.
+  if (k.how === 'sky') {
+    return `<span class="badge known">${link(k, `${esc(k.reporter)}'s comet (reported in ${esc(k.telescope || 'another camera')}${when})`)}</span>`
+      + `<span class="badge hint">no report${here} yet</span>`;
+  }
+  const hint = `maybe ${esc(k.reporter)}'s ${esc(k.telescope || 'other-instrument')} comet,${when} (matched by time only)`;
   return `<span class="badge candidate">UNREPORTED${here}</span><span class="badge hint">${link(k, hint)}</span>`;
 };
 const bust = (p, iso) => p ? `${p}?${encodeURIComponent(iso || '')}` : null;
