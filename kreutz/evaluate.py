@@ -42,6 +42,18 @@ SUN_XY = INSTRUMENT.sun_xy
 PUBLISH_DELAY = timedelta(minutes=16)
 LINK_PX = 3.0       # predicted vs found position, one frame on
 LINK_DV = 1.0       # velocity change between windows, px/frame
+
+
+def link_miss(prev, c, steps):
+    """How far candidate c lies from where chain-end `prev` puts it `steps`
+    frames on, moving at the mean of the two windows' velocities: a Kreutz
+    comet speeds up, and predicting with the older window's velocity alone
+    falls behind it (Scott Holdren's CCOR-2 comet of 2026-11-11: 23:45 at
+    (1353,1855) moving (-3.5,-4.0), 00:00 at (1350,1848) moving (-3.5,-5.0),
+    3.04 px from the old prediction against LINK_PX 3, 2.55 from this one;
+    the chain broke and the alert waited another 45 minutes)."""
+    vx, vy = (prev["vx"] + c["vx"]) / 2, (prev["vy"] + c["vy"]) / 2
+    return float(np.hypot(c["x"] - (prev["x"] + vx * steps), c["y"] - (prev["y"] + vy * steps)))
 MATCH_PX = 8.0      # track vs reported position at a reported time
 
 
@@ -134,12 +146,11 @@ def tracks(by_time, threshold, link):
                 done.append(ch)
                 continue
             # across a missing frame the prediction is two frames out
-            px, py = last["x"] + last["vx"] * steps, last["y"] + last["vy"] * steps
             best, bd = None, LINK_PX * steps
             for k, c in enumerate(cands):
                 if k in used:
                     continue
-                d = np.hypot(c["x"] - px, c["y"] - py)
+                d = link_miss(last, c, steps)
                 if d <= bd and np.hypot(c["vx"] - last["vx"], c["vy"] - last["vy"]) <= LINK_DV:
                     best, bd = k, d
             if best is None:

@@ -1733,3 +1733,20 @@ def test_other_instrument_report_must_be_where_the_track_is(monkeypatch):
     # the real LASCO arithmetic: C3 (727, 934) is 29 Rsun out at PA -65
     r, pa = real_place("C3", 727.0, 934.0, datetime(2026, 11, 11, 14, 42))
     assert r == pytest.approx(29.0, abs=0.5) and pa == pytest.approx(-65, abs=1.5)
+
+
+def test_chain_links_an_accelerating_comet():
+    # Scott Holdren's CCOR-2 comet of 2026-11-11, from our own windows
+    prev = {"x": 1353.0, "y": 1855.0, "vx": -3.5, "vy": -4.0}
+    nxt = {"x": 1350.0, "y": 1848.0, "vx": -3.5, "vy": -5.0}
+    assert np.hypot(nxt["x"] - (prev["x"] + prev["vx"]), nxt["y"] - (prev["y"] + prev["vy"])) > evaluate.LINK_PX  # the old rule
+    assert evaluate.link_miss(prev, nxt, 1) <= evaluate.LINK_PX
+    same = dict(prev, x=1349.5, y=1851.0)  # constant velocity: as before
+    assert evaluate.link_miss(prev, same, 1) == pytest.approx(0.0)
+    t0 = datetime(2026, 11, 11, 23, 30, 14)
+    by_time = {t0: [dict(prev, x=1356.0, y=1859.0, score=9.6, per_frame=[2] * 8, t=t0, time=t0.isoformat())]}
+    for k, c in ((1, prev), (2, nxt)):
+        t = t0 + timedelta(minutes=15) * k
+        by_time[t] = [dict(c, score=9.0, per_frame=[2] * 8, t=t, time=t.isoformat())]
+    trs = evaluate.tracks(by_time, 6.0, link=3)
+    assert len(trs) == 1 and len(trs[0]) == 3
