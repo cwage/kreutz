@@ -1793,3 +1793,17 @@ def test_a_report_attached_to_a_followed_object_is_not_offered_again():
     assert live.unclaimed([ruan, other], pending) == [other]
     assert live.unclaimed([ruan, other], []) == [ruan, other]
     assert live.unclaimed([{"id": "report_cw_1", "telescope": "CCOR2"}], pending) == []
+
+
+def test_confirmation_of_a_held_candidate_is_not_a_report():
+    from kreutz import notify
+    track = [{"time": "2026-11-12T15:18:26", "x": 548.0, "y": 740.0, "vx": -1.5, "vy": -2.0},
+             {"time": "2026-11-12T15:42:25", "x": 546.0, "y": 736.0, "vx": -1.0, "vy": -2.0}]
+    held = {"kind": "confirmed", "track": track, "other_instruments": [], "known": None, "paged": False,
+            "heading_deg": 21, "lane_px": 40, "frames": 5, "note": "straight-line residual 0.3 px over 5 frames",
+            "stack": {"n": 9, "z": 19.4, "null_mean": 3.0, "null_std": 0.8, "stack": 19.5, "beaten": 0},
+            "report": ["1518 548 740"], "report_paged": False}
+    title, _, prio, _ = notify.compose(held, "a.confirmed.json")
+    assert "REPORT" not in title and prio == "low"
+    title, _, prio, _ = notify.compose(dict(held, paged=True), "a.confirmed.json")
+    assert title.endswith("REPORT, confirmed") and prio == "urgent"  # passed the gates: as before
