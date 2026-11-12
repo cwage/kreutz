@@ -82,7 +82,7 @@ def compose(d, name):
     # real stack lifted, which pages as kind "report"). Ruan's comet back in
     # C3 on 2026-11-12, held at 20 deg off sunward with no report attached,
     # would otherwise have paged "REPORT, confirmed" urgently on confirmation.
-    if isinstance(d, dict) and (d.get("kind") == "report" or "page" in d or (confirmed and "stack" in d and not far)):
+    if isinstance(d, dict) and (d.get("kind") == "report" or d.get("page") or (confirmed and "stack" in d and not far)):
         return verdict_page(d, who, others, confirmed)
     hint = f"likely {others[0]['reporter']}'s ({others[0]['telescope']})" if others else "no report anywhere"
     if isinstance(d, dict) and d.get("revived"):
