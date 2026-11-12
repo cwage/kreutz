@@ -1412,6 +1412,57 @@ def test_a_search_waits_for_fresh_frames_after_a_long_gap():
     assert live.run_starts(short) == [0] * 15  # a gap under BG_MAX_GAP doesn't restart the run
 
 
+def test_a_skipped_window_still_follows_up_its_frame(monkeypatch, tmp_path):
+    # CCOR-2 lacked 20:00-20:45 on 2026-11-12: the windows after the gap
+    # were skipped, and the follow-up waited with them, so Ruan's comet
+    # went 11 frames unmeasured although frames were coming in
+    t0 = datetime(2026, 11, 12, 12, 0)
+    times = [t0 + live.CADENCE * k for k in range(live.BG_FRAMES + live.BG_SKIP + 4 + 2)]
+
+    class Seq:
+        def __init__(self, paths):
+            self.times, self.shape = times, (8, 8)
+
+        def sun_rc(self):
+            return 4, 4
+
+        def rc_to_report(self, r, c):
+            return c, r
+
+    def gap(seq, last, n, thr):
+        raise ValueError("window spans a data gap (2:45:00)")
+
+    followed = []
+
+    def follow_up(seq, last, pending, *a, **k):
+        followed.append(seq.times[last])
+        return pending
+
+    class Stop(Exception):
+        pass
+
+    def stop(s):
+        raise Stop
+
+    monkeypatch.setattr(live, "LIVE", tmp_path)
+    monkeypatch.setattr(live.page, "write", lambda: None)
+    monkeypatch.setattr(live, "load_state", lambda now, span: (set(), [], [{"alert": "a.json"}]))
+    monkeypatch.setattr(live, "save_state", lambda *a, **k: None)
+    monkeypatch.setattr(live, "sync", lambda since: 0)
+    monkeypatch.setattr(live, "frame_paths", lambda a, b: [f"f{k}" for k in range(len(times))])
+    monkeypatch.setattr(live, "Sequence", Seq)
+    monkeypatch.setattr(live, "lane_field", lambda now: None)
+    monkeypatch.setattr(live, "build_field", lambda shape, when=None: None)
+    monkeypatch.setattr(live, "search", gap)
+    monkeypatch.setattr(live, "follow_up", follow_up)
+    monkeypatch.setattr(live, "write_status", lambda *a, **k: None)
+    monkeypatch.setattr(live.time, "sleep", stop)
+    monkeypatch.setattr("sys.argv", ["kreutz.live"])
+    with pytest.raises(Stop):
+        live.main()
+    assert followed == times[-2:]
+
+
 def test_orbit_fit_keeps_the_perihelion_time_in_range():
     from kreutz import orbit
     # a point 42 deg from the Sun: unbounded, the fit moved T 14.8 days

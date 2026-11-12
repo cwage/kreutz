@@ -1476,6 +1476,16 @@ def main():
             except ValueError as e:
                 print(f"{t:%Y-%m-%d %H:%M}: skipped ({e})", file=sys.stderr)
                 done.add(t)
+                # The frame came even if the window can't be searched: the
+                # follow-up measures alerted objects in it. It used to wait
+                # for the search, so the frames after a gap counted as
+                # misses: CCOR-2 lacked 20:00-20:45 on 2026-11-12 and the
+                # next searchable window was 22:30, 11 frames after Ruan's
+                # comet was last measured, one short of dropping it.
+                try:
+                    pending = follow_up(seq, last, pending, args.notify, args.render, chains, field)
+                except Exception as e2:  # a follow-up must never take the watcher down
+                    print(f"{t:%H:%M} follow-up error: {e2}", file=sys.stderr)
                 checkpoint(t)
                 # say so on the status page too: a run of skipped windows
                 # (CCOR-2 missing two frames, 2026-10-29 15:45-17:30) left
