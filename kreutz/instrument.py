@@ -138,7 +138,12 @@ INSTRUMENTS = {
                         460, 1250, None, 75, (1005.7, 957.1), True, 25, 4,
                         # Reported Kreutz comets: 5th percentile 4.3 px/frame; the
                         # slowest real alert so far 4.1.
-                        4.0, 12, season_days=15),
+                        # The search goes to 18 px from the frame edge: the bottom 15
+                        # rows are blank and the rows above them are as quiet as the
+                        # middle (2026-11-11: 68th percentile of |significance| 0.97
+                        # in rows 10-60 and 0.95 in the middle), and in November the
+                        # lane enters across that edge.
+                        4.0, 12, season_days=15, edge_px=18),
     # The feed carries CCOR-2 at level 1A only, and NCEI's archive prefix
     # (SWFO/SWFO-L1/CCOR-2/) is empty as of 2026-10-20; the feed's ~30
     # days of frames are the only source. Outside the magnetosphere at L1
@@ -176,7 +181,11 @@ INSTRUMENTS = {
                         2.5,
                         # The lane runs ~700 px at 3-10 px/frame (CCOR-1: ~700 at
                         # 9-12), so about twice CCOR-1's passage.
-                        20, season_days=30),
+                        # Edge as CCOR-1 (rows 10-60: 0.84 vs 0.96 in the middle). Scott
+                        # Holdren's CCOR-2 comet of 2026-11-11 21:15 came in 23 px from
+                        # the bottom edge and our search, keeping 30 px clear, had too
+                        # few frames of it in any window until long after his alert.
+                        20, season_days=30, edge_px=18),
     # sun_xy is CRPIX, which the level 0.5 headers hold fixed and which
     # lasco.load rotates about. Measured on the 2024-01..2026-10 Kreutz
     # reports (less those their reporter retracted within a day): C2's 479
