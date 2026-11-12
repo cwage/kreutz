@@ -765,6 +765,16 @@ def track_stack(seq, track):
         return None
 
 
+def lifts_orbit_hold(off_orbit, motion_ok, held, on_line, st):
+    """Does a candidate the orbit gate alone held page anyway, because its
+    stack already reads real (REAL_Z) at the alert? Moving like a sungrazer
+    (motion_ok) and held by nothing else."""
+    if not (off_orbit and motion_ok and not held and not on_line and st):
+        return False
+    z = st.z_at()
+    return z is not None and z >= REAL_Z
+
+
 def page_for(paged, known, st):
     """What an alert's page says. "report": passed the page gates,
     unreported, and its stack reads real (z at REAL_Z or past). "watching":
@@ -1508,6 +1518,13 @@ def main():
                     # the stack along the track's line against offset copies:
                     # the page's verdict (stackcheck); carried on by the follow-up
                     st = track_stack(seq, ch)
+                    if lifts_orbit_hold(off_orbit, motion_ok, held, on_line, st):
+                        # the stack outranks the family template: no false CCOR alert of
+                        # 2026-10-23..11-08 stacked to REAL_Z at the alert, and in November
+                        # the template fits no comet (node pinned at the grid's edge,
+                        # 1800-2900" for all four real CCOR-1 comets of 11-09..11-12, two of
+                        # them at z 29 and 44 when they were held)
+                        paged, off_orbit = True, False
                     page_kind = page_for(paged, known_rep, st)
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
