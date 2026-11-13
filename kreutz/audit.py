@@ -36,10 +36,11 @@ page), to look at by eye; one a later report matches is taken back
 audits every instrument with a watcher's state on disk, every half hour,
 each in its own process (the instrument is fixed per process), and
 appends the lines to data/audit.log. With --digest, once a day at that
-UTC time the day's lines, with how many alerts paged, go to the ntfy
-topic (NTFY_TOPIC, as kreutz.notify) at low priority: what to read over
-coffee instead of watching a log. Meant as a container alongside the
-watchers:
+UTC time it refreshes the month's reports (reports.refresh) and writes
+the day's lines, with how many alerts paged, to data/audit-digest.txt
+(on the status site): what to read over coffee instead of watching a
+log. It went to the ntfy topic until 2026-11-13; on a phone it was noise.
+Meant as a container alongside the watchers:
 
     docker compose run --rm -d --name kreutz-audit kreutz kreutz.audit --loop --digest 13:00
 
@@ -79,8 +80,9 @@ MISS_AFTER = timedelta(hours=2)  # the watcher needs ~45 min of frames to decide
 FETCH_FAILURES = 3
 LOG = DATA / "audit.log"            # --loop: every line said, with when
 DIGEST_STATE = DATA / "audit-digest.json"  # --digest: when the last one went
+DIGEST_TEXT = DATA / "audit-digest.txt"    # --digest: the last one
 LOOP_S = 1800
-DIGEST_LINES = 25                   # an ntfy message is a header: keep it short
+DIGEST_LINES = 25                   # keep it short
 
 
 def as_track(rec):
@@ -385,10 +387,9 @@ def digest(since, now, log=LOG, dirs=None):
 
 def loop(digest_at=None):
     """run_all every LOOP_S, printing the lines, and at `digest_at` (a UTC
-    time) once a day the digest of the last day to the ntfy topic, or to
-    stdout without one. The last digest's time is kept in DIGEST_STATE so
-    a restart doesn't send another."""
-    from .notify import _send
+    time) once a day the reports refresh and the digest of the last day,
+    to stdout and DIGEST_TEXT (not to ntfy). The last digest's time is
+    kept in DIGEST_STATE so a restart doesn't make another."""
     while True:
         try:
             for ln in run_all():
@@ -406,13 +407,10 @@ def loop(digest_at=None):
             except Exception as e:
                 print(f"reports refresh: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             title, lines = digest(last or now - timedelta(days=1), now)
-            topic = os.environ.get("NTFY_TOPIC")
             try:
-                if topic:
-                    _send(os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/"), topic,
-                          title, lines, "low", "clipboard")
-                else:
-                    print("\n".join([title] + lines), flush=True)
+                text = "\n".join([title] + lines)
+                print(text, flush=True)
+                DIGEST_TEXT.write_text(text + "\n")
                 DIGEST_STATE.write_text(json.dumps({"sent": now.isoformat()}))
             except Exception as e:
                 print(f"digest: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
@@ -426,7 +424,8 @@ def main():
     ap.add_argument("--loop", action="store_true",
                     help=f"audit every instrument with a watcher, every {LOOP_S // 60} min, into data/audit.log")
     ap.add_argument("--digest", type=lambda s: datetime.strptime(s, "%H:%M").time(), metavar="HH:MM",
-                    help="with --loop: the day's lines to the ntfy topic once a day at this UTC time")
+                    help="with --loop: once a day at this UTC time, refresh the reports and write "
+                         "the day's lines to data/audit-digest.txt")
     args = ap.parse_args()
     if args.loop:
         loop(args.digest)

@@ -1679,6 +1679,32 @@ def test_audit_digest_collects_the_day(tmp_path):
     assert lines == ["11-08 00:00 to 11-09 00:00 UTC: no pages", "no reports to judge, nothing taken back"]
 
 
+def test_audit_digest_goes_to_a_file_not_ntfy(tmp_path, monkeypatch):
+    from kreutz import audit, notify, reports
+
+    class Stop(Exception):
+        pass
+
+    def no_ntfy(*a, **k):
+        raise AssertionError("the digest went to ntfy")
+
+    def stop(s):
+        raise Stop
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    monkeypatch.setattr(notify, "_send", no_ntfy)
+    monkeypatch.setattr(audit, "run_all", lambda: [])
+    monkeypatch.setattr(audit, "_utcnow", lambda: datetime(2026, 11, 13, 13, 0, 30))
+    monkeypatch.setattr(audit, "digest", lambda since, now: ("kreutz audit", ["no pages"]))
+    monkeypatch.setattr(reports, "refresh", lambda: 0)
+    monkeypatch.setattr(audit, "DIGEST_STATE", tmp_path / "state.json")
+    monkeypatch.setattr(audit, "DIGEST_TEXT", tmp_path / "digest.txt")
+    monkeypatch.setattr(audit.time, "sleep", stop)
+    with pytest.raises(Stop):
+        audit.loop(datetime(2026, 1, 1, 13, 0).time())
+    assert (tmp_path / "digest.txt").read_text() == "kreutz audit\nno pages\n"
+    assert json.loads((tmp_path / "state.json").read_text())["sent"].startswith("2026-11-13T13:00")
+
+
 def test_animation_marks_only_where_the_search_looked(tmp_path):
     # issue #89: the earlier frames' marks are the line run back, and were
     # drawn off the frame too; now dim, and none off the frame, stepped by time
