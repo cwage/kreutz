@@ -48,7 +48,8 @@ def run(args):
         if r.get("alert"):
             kinds.setdefault(r["alert"].rsplit("/", 1)[-1].replace(".json", ""), []).append(r["kind"])
     out = []
-    files = sorted(p for p in (LIVE / "alerts").glob("*.json") if not p.name.endswith(".confirmed.json"))
+    # the alert files only: not the .confirmed/.report/.page files beside them
+    files = sorted(p for p in (LIVE / "alerts").glob("*.json") if p.name.count(".") == 1)
     for p in files:
         d = json.loads(p.read_text())
         if not isinstance(d, dict):  # the oldest alert files are the bare track
@@ -65,7 +66,10 @@ def run(args):
                "label": flagged.get(p.stem, "real"),
                "n": st.n, "z": {str(h): st.z_at(t_alert + timedelta(hours=h)) for h in HOURS},
                "z_max": max((z for z in (st.z_at(t) for t in st.times) if z is not None), default=None),
-               "secs": round(time.time() - t0)}
+               "secs": round(time.time() - t0),
+               # the frames' values, so a change to the statistic can be
+               # placed against these alerts without loading frames again
+               "stack": st.to_dict()}
         out.append(row)
         zs = " ".join(f"+{h}h {row['z'][str(h)]:5.1f}" if row["z"][str(h)] is not None else f"+{h}h   -  " for h in HOURS)
         print(f"{row['label']:5s} {'paged' if row['paged'] else 'held ':5s} {p.stem:28s} n {st.n:3d}  {zs}  "

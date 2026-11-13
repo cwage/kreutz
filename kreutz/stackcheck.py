@@ -37,6 +37,14 @@ R = 2                   # px around the predicted position searched for the peak
 # ran 3 to 50 (the bright ones page here, the faint ones by persistence,
 # live.HELD_WINDOWS); C2's false alerts stacked to 13.6 (stars and
 # non-Kreutz movers its gates let through), its real ones 27 and 51.
+# Rerun 2026-11-13 over the alerts through 11-12 with each series leaving
+# out its brightest frame (Stack._at; data/calib now keeps the frames'
+# values, the sum's run is in data/calib/sum-20261108): no paged false
+# alert reaches these anywhere; three CCOR-1 false alerts the sum put at
+# 8.9-9.2 on one frame read 3.9-7.4, C2's two paged false alerts at 13.6
+# and 10.8 read 2.7 and 5.9, and the one real alert that loses "real" at
+# the alert is C3's of 11-12 15:42 (5 frames, 19.5 -> 13.4; held by its
+# heading anyway, and past 40 within hours).
 REAL_Z_BY = {"ccor1": 8.0, "ccor2": 8.0, "c2": 15.0, "c3": 15.0}
 REAL_Z = REAL_Z_BY.get(INSTRUMENT.key, 8.0)
 
@@ -86,11 +94,22 @@ class Stack:
         return len(self.values)
 
     def _at(self, k):
-        """(stack, offsets' mean, offsets' std, beaten) over the first k frames."""
+        """(stack, offsets' mean, offsets' std, beaten) over the first k
+        frames. Each series, the path's and every offset's alike, leaves
+        out its own brightest frame once it has two: a comet adds up over
+        many frames and loses a frame's share, a one-frame hit on the path
+        loses everything. The sum let one frame carry it: a 14.4 sigma
+        spike at 23:00 on 2026-11-12 (a cosmic ray, at one spot in one
+        frame) on a path of noise read z 8.9 and paged REPORT on CCOR-1;
+        without it the stack read 3.8."""
         v = np.asarray(self.values[:k])
         nl = np.asarray(self.null[:k])
-        s = v.sum() / np.sqrt(k)
-        ns = nl.sum(axis=0) / np.sqrt(k)
+        if k >= 2:
+            s = (v.sum() - v.max()) / np.sqrt(k - 1)
+            ns = (nl.sum(axis=0) - nl.max(axis=0)) / np.sqrt(k - 1)
+        else:
+            s = v.sum()
+            ns = nl.sum(axis=0)
         return float(s), float(ns.mean()), float(ns.std()), int((ns >= s).sum())
 
     def _k(self, t):
