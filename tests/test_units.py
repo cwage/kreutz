@@ -130,6 +130,29 @@ def test_stack_reads_a_planted_source_and_not_noise():
     assert stackcheck.verdict(None) is None
 
 
+def test_one_bright_frame_does_not_make_a_stack_real():
+    # CCOR-1, 2026-11-12 21:15-23:30: noise along the path but for a 14.4
+    # sigma hit at 23:00 (a cosmic ray: one spot, one frame) read z 8.9 and
+    # paged REPORT; each series now leaves out its own brightest frame
+    from kreutz import stackcheck
+    rng = np.random.default_rng(3)
+    t0 = datetime(2026, 11, 12, 21, 15)
+
+    def stack_of(path):
+        st = stackcheck.Stack()
+        st.times = [t0 + timedelta(minutes=15) * k for k in range(len(path))]
+        st.values = list(path)
+        st.null = [list(1.5 + 0.7 * rng.standard_normal(len(st.offs))) for _ in path]
+        return st
+
+    spike = stack_of([1.75, 1.67, 2.64, 3.26, 2.84, 2.34, 2.38, 14.36, 2.73, 1.60])
+    assert stackcheck.verdict(spike.z_at()) == "weak" and spike.z_at() < 6
+    comet = stack_of([4.5, 5.2, 4.8, 5.5, 6.1, 5.0, 5.8, 6.4, 5.9, 6.6])
+    assert stackcheck.verdict(comet.z_at()) == "real"
+    one = stack_of([9.0])
+    assert one.n == 1 and one.z_at() > 8  # nothing to leave out of a single frame
+
+
 def test_page_for_and_report_page_once(monkeypatch, tmp_path):
     from kreutz import stackcheck
     t0 = datetime(2026, 11, 8, 2, 0, 25)
