@@ -241,7 +241,8 @@ is written with the report block ready for Sungrazer's form.
   after it is a quiet page with the measured block.
 - `watching` (low): a candidate that passed the page gates but whose stack
   is still weak. No action; it pages REPORT if it gets there.
-- `known comet` (low, at confirmation): matched to somebody's report.
+- Nothing for a comet matched to somebody's report in the same instrument,
+  at any stage; the status page shows it with the report.
 - Nothing for a candidate held by a gate (below) until it's confirmed, and
   then a quiet page saying why it was held, unless the orbit search found it.
 
