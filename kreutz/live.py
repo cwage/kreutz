@@ -103,8 +103,10 @@ at one spot (about 1600,1600) that CCOR-1 doesn't see, for one comet an
 hour earlier, so it's left off there.
 --render makes a confirmed object's cutouts and pictures (render.py,
 style.py) in the background under data/render/<alert name>/, and again
-every RENDER_EVERY frames while the object is still in view, so the
-pictures grow with the passage.
+again while the object is still in view (render_every: every
+RENDER_EVERY frames early on, then every RENDER_SHARE-th of the passage
+so far), so the pictures grow with the passage. Renders run at the
+lowest CPU priority.
 --keep-days N deletes frames and significance maps more than N days old
 (prune), for an always-on watcher on a small disk. The frames directory is
 the archive fetcher's too, so don't use it where archive runs keep frames.
@@ -615,8 +617,21 @@ CHAIN_PX = 8.0  # a search chain this close to a follow-up's prediction is the s
 FOLLOWED_PX = 15.0  # and so is a new chain this close to a follow-up's prediction (+ FOLLOWED_GROW/frame)
 FOLLOWED_GROW = 1.0
 CONFIRMED_LOST = 12  # the same for a confirmed object: it's real, so wait out a stray-light spell (3 h)
-RENDER_EVERY = 4  # frames between progress renders of a confirmed object
+RENDER_EVERY = 4  # frames between progress renders of a confirmed object, early on
+# A progress render redoes the whole passage so far, so for a long one it
+# waits for the passage to grow by this share: Ruan's comet of 2026-11-12,
+# followed ~100 frames on CCOR-1 and CCOR-2 at once beside two other
+# comets, was rendered hourly at a full core for minutes per render.
+RENDER_SHARE = 4
 RENDER_LOST = 8  # the render's follower tolerates this many misses (a stray-light hour)
+
+
+def render_every(points):
+    """Frames between progress renders of a confirmed object measured in
+    `points` frames: RENDER_EVERY, or a RENDER_SHARE-th of the passage
+    once that's longer (hourly on CCOR early on, ~6 h by 100 frames). The
+    render when it's lost still covers the whole passage."""
+    return max(RENDER_EVERY, points // RENDER_SHARE)
 
 
 def start_render(f):
@@ -629,7 +644,9 @@ def start_render(f):
     cmd = (f"python -m kreutz.render {c['time'][:16]} {c['x']} {c['y']} {c['vx']} {c['vy']} "
            f"--back 24 --ahead {ahead} --lost {RENDER_LOST} --name {name} "
            f"&& python -m kreutz.style /data/render{INSTRUMENT.tag}/{name} --all")
-    f["render_proc"] = subprocess.Popen(["sh", "-c", cmd], cwd="/srv",
+    # at the lowest priority: a render takes a core for minutes, and the
+    # machine is shared
+    f["render_proc"] = subprocess.Popen(["nice", "-n", "19", "sh", "-c", cmd], cwd="/srv",
                                         stdout=open(LIVE / "alerts" / f"{name}.render.log", "w"),
                                         stderr=subprocess.STDOUT)
     f["since_render"] = 0
@@ -983,7 +1000,7 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
     """Keep measuring alerted objects in each new frame. Once one has been
     seen in MIN_POINTS frames it's 'confirmed': the alert's .confirmed.json
     gets the report block and the notify command runs on it. It's then
-    still followed, re-rendered every RENDER_EVERY frames if --render, until
+    still followed, re-rendered every render_every() frames if --render, until
     it has been missing for CONFIRMED_LOST frames in a row (logged as
     ended); a candidate missing CONFIRM_LOST frames before confirmation is
     logged as faded. A frame where the single-frame measurement fails but
@@ -1121,7 +1138,8 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
                     print(f"notify failed: {e}", file=sys.stderr)
             if render:
                 start_render(f)
-        elif f.get("confirmed") and render and f["since_render"] >= RENDER_EVERY and not rendering(f):
+        elif f.get("confirmed") and render and f["since_render"] >= render_every(len(f["points"])) \
+                and not rendering(f):
             start_render(f)
         keep.append(f)
     return keep
