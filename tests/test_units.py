@@ -891,7 +891,7 @@ def test_frames_off_the_grid_are_kept_a_half_step_apart(tmp_path, monkeypatch):
     # (5.6 min after the one before, as after the long gap that evening).
     stamps = ["031205", "032405", "041740", "042817", "043351", "043851"]
     for k, s in enumerate(stamps):
-        (d / f"C2_05_20250819T{s}_{22999706 + k}.fts").write_bytes(b"x")  # not empty: empty files are skipped
+        (d / f"C2_05_20250819T{s}_{22999706 + k}.fts").write_bytes(b"x" * 2880)  # a whole FITS block
     got = [frames.frame_time(p) for p in frames.frame_paths(datetime(2025, 8, 19), datetime(2025, 8, 19, 5))]
     assert [f"{t:%H%M%S}" for t in got] == ["031205", "032405", "041740", "042817", "043851"]
     seq = FakeSeq(got)
@@ -1415,12 +1415,38 @@ def test_orbit_match_across_instruments(monkeypatch):
     assert orbitsearch.joint_rms(best, track, later, INSTRUMENTS["ccor2"]) > orbitsearch.SAME_RMS
 
 
-def test_pull_keeps_only_fits_files(tmp_path):
+FITS_BODY = (b"SIMPLE  =                    T" + b" " * 50).ljust(2880 * 2, b" ")
+
+
+def test_pull_keeps_only_whole_fits_files(tmp_path):
     from kreutz import sync
-    good, empty = tmp_path / "a.fts", tmp_path / "b.fts"
-    bodies = {"u/a": b"SIMPLE  =                    T" + b" " * 50, "u/b": b""}
-    assert sync.pull([(None, "u/a", good), (None, "u/b", empty)], get=bodies.__getitem__) == 1
-    assert good.exists() and not empty.exists() and not empty.with_suffix(".part").exists()
+    good, empty, short = tmp_path / "a.fts", tmp_path / "b.fts", tmp_path / "c.fts"
+    # C3 2026-11-13 08:12: the frame caught while LASCO was still writing it
+    bodies = {"u/a": FITS_BODY, "u/b": b"", "u/c": FITS_BODY[:2000]}
+    assert sync.pull([(None, "u/a", good), (None, "u/b", empty), (None, "u/c", short)],
+                     get=bodies.__getitem__) == 1
+    assert good.exists() and not empty.exists() and not short.exists()
+    assert not list(tmp_path.glob(".*.part"))
+    # one already on disk cut short is fetched again; a whole one isn't
+    short.write_bytes(FITS_BODY[:2000])
+    assert sync.pull([(None, "u/a", good), (None, "u/a", short)], get=bodies.__getitem__) == 1
+    assert short.read_bytes() == FITS_BODY
+
+
+def test_frame_paths_skip_a_cut_short_file(tmp_path, monkeypatch):
+    from kreutz import frames
+    from kreutz.instrument import INSTRUMENTS
+    c3 = INSTRUMENTS["c3"]
+    monkeypatch.setattr(frames, "INSTRUMENT", c3)
+    monkeypatch.setattr(frames, "_NAME", c3.name_re)
+    monkeypatch.setattr(frames, "CADENCE", c3.cadence)
+    monkeypatch.setattr(frames, "L1B", tmp_path)
+    d = tmp_path / "2026/11/13"
+    d.mkdir(parents=True)
+    whole, short = d / "C3_05_20261113T074225_33894873.fts", d / "C3_05_20261113T080625_33894874.fts"
+    whole.write_bytes(b"x" * 2880 * 2)
+    short.write_bytes(b"x" * 8192)  # what was on disk at 08:23
+    assert frames.frame_paths(datetime(2026, 11, 13), datetime(2026, 11, 13, 9)) == [whole]
 
 
 def test_pull_writes_through_a_part_file_of_its_own(tmp_path, monkeypatch):
@@ -1428,7 +1454,7 @@ def test_pull_writes_through_a_part_file_of_its_own(tmp_path, monkeypatch):
     dest = tmp_path / "a.fts"
     shared = dest.with_suffix(".part")
     shared.write_bytes(b"another process's half-written frame")
-    body = b"SIMPLE  =                    T" + b" " * 50
+    body = FITS_BODY
     assert sync.pull([(None, "u/a", dest)], get=lambda url: body) == 1
     assert dest.read_bytes() == body and shared.exists()  # the other process's part file untouched
     assert not list(tmp_path.glob(".*.part"))
@@ -1545,9 +1571,9 @@ def test_frame_downloads_from_two_containers_use_their_own_part_files(tmp_path, 
     for host in ("a1b2c3", "d4e5f6"):
         monkeypatch.setattr(sync.socket, "gethostname", lambda h=host: h)
         dest.unlink(missing_ok=True)
-        assert sync.pull([(None, "u", dest)], get=lambda url: b"SIMPLE  = T") == 1
+        assert sync.pull([(None, "u", dest)], get=lambda url: FITS_BODY) == 1
     assert len(set(seen)) == 2
-    assert dest.read_bytes() == b"SIMPLE  = T"
+    assert dest.read_bytes() == FITS_BODY
 
 
 def test_orbit_long_takes_frames_and_threshold():

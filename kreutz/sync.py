@@ -23,7 +23,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from .frames import INSTRUMENT, L1B
+from .frames import INSTRUMENT, L1B, whole_fits
 from .live import FEED, POLL_S, _get
 
 
@@ -46,16 +46,18 @@ def listing(since=None):
 
 def pull(frames, get=_get):
     """Download the (time, url, destination) frames not on disk yet; how many were new.
-    A body that isn't a FITS file (LASCO's server once answered 200 with
-    nothing, 2026-10-25 23:42, and the C3 watcher died reading it) isn't
-    saved; the next poll asks for it again."""
+    A body that isn't a whole FITS file isn't saved, and the next poll asks
+    for it again: LASCO's server once answered 200 with nothing (2026-10-25
+    23:42), and once served a frame it was still writing, 8192 of its
+    2108160 bytes (2026-11-13 08:12); the C3 watcher died reading each. A
+    cut-short file already on disk is fetched again."""
     new = 0
     for _, url, dest in frames:
-        if dest.exists():
+        if dest.exists() and whole_fits(dest.stat().st_size):
             continue
         body = get(url)
-        if not body.startswith(b"SIMPLE  ="):
-            print(f"{dest.name}: not a FITS file ({len(body)} bytes); trying again next poll", file=sys.stderr)
+        if not body.startswith(b"SIMPLE  =") or not whole_fits(len(body)):
+            print(f"{dest.name}: not a whole FITS file ({len(body)} bytes); trying again next poll", file=sys.stderr)
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         # A part file of our own: the CCOR-2 watcher and the sync-ccor2

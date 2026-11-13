@@ -96,6 +96,17 @@ def frame_time(path):
     return datetime.strptime(_NAME.search(str(path)).group(1), "%Y%m%dT%H%M%S")
 
 
+FITS_BLOCK = 2880  # a FITS file is whole blocks of this many bytes
+
+
+def whole_fits(size):
+    """Whether a file of `size` bytes can be a whole FITS file: not empty,
+    and whole blocks. A download that caught the file still being written
+    upstream is neither (C3 2026-11-13 08:06: 8192 of 2108160 bytes, read
+    by the watcher, which died; 10-28 19:18: 2368 bytes short)."""
+    return size > 0 and size % FITS_BLOCK == 0
+
+
 def frame_paths(start, end):
     """L1b files with observation time in [start, end], in time order, on
     the standard 15-minute grid. CCOR-1 sometimes runs at 5-minute
@@ -111,9 +122,10 @@ def frame_paths(start, end):
         # cadence, 2025-07-18 03:45-06:15) come as _0C and stand in for it.
         paths += (L1B / f"{d:%Y/%m/%d}").glob(INSTRUMENT.glob())
         d += timedelta(days=1)
-    # an empty file is a failed download, not a frame (a 0-byte C3 file
-    # stopped its watcher on 2026-10-25)
-    paths = sorted((p for p in paths if start <= frame_time(p) <= end and p.stat().st_size > 0), key=frame_time)
+    # an empty or cut-short file is a failed download, not a frame (a
+    # 0-byte C3 file stopped its watcher on 2026-10-25, an 8 KB one on 11-13)
+    paths = sorted((p for p in paths if start <= frame_time(p) <= end and whole_fits(p.stat().st_size)),
+                   key=frame_time)
     if INSTRUMENT.second is not None:
         return [p for p in paths if frame_time(p).minute % INSTRUMENT.cadence_min == 0]
     kept = []

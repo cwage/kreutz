@@ -1491,7 +1491,9 @@ def main():
             try:
                 cands = [asdict(c) for c in search(seq, last, args.n, args.threshold)
                          if consistent(c.per_frame) and np.hypot(c.vx, c.vy) >= LIVE_SPEED_MIN]
-            except ValueError as e:
+            except (ValueError, OSError) as e:
+                # OSError: a frame that can't be read (a cut-short download
+                # the size check missed) skips the window, not the watcher
                 print(f"{t:%Y-%m-%d %H:%M}: skipped ({e})", file=sys.stderr)
                 done.add(t)
                 # The frame came even if the window can't be searched: the
