@@ -170,7 +170,7 @@ Modules, each with usage in its docstring:
 | `kreutz.style` | pictures from a render's FITS cubes in a named preset (reference styles, copy and change) |
 | `kreutz.live` | watch the SWPC real-time feed; alert on unreported candidates and keep going |
 | `kreutz.score` | table of the live alerts against the reports that appeared: our lead or lag |
-| `kreutz.audit` | the other way round: reports the watcher missed, vetoed, or alerted on and then dropped, when we had each against its reporter, and alerts that came to nothing; `--loop --digest HH:MM` runs it for every watcher and sends a daily digest |
+| `kreutz.audit` | the other way round: reports the watcher missed, vetoed, or alerted on and then dropped, when we had each against its reporter, and alerts that came to nothing; `--loop --digest HH:MM` runs it for every watcher and writes a daily digest to `data/audit-digest.txt` |
 | `kreutz.report` | measure an object frame by frame and print the block Sungrazer's report form takes |
 | `kreutz.notify` | post an alert or confirmation to an ntfy topic (the watcher's `--notify`) |
 | `kreutz.page` | write the one status page over every instrument's watcher, `data/index.html`, and `data/mark.html`, a frame player for circling things in a render (`mark.html?dir=render-ccor2/<name>/style-soft/field`) |
