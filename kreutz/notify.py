@@ -11,9 +11,10 @@ NTFY_TOPIC (docker-compose.yml passes both through from the host). The
 message is terse on purpose: nothing can be done from a phone, so it says
 what fired and gives the kreutz.report command to run at a computer,
 which measures the object and prints the block for Sungrazer's form.
-A comet somebody has already reported (the file's "known") gets a single
-low-priority message when it's confirmed, and nothing at the candidate
-stage. Nor does a candidate that doesn't move like a sungrazer (the
+A comet somebody has already reported in this instrument (the file's
+"known") gets nothing at any stage: there's nothing to do about it, and
+the status page has it. (It had one low-priority message at confirmation,
+which was noise.) Nor does a candidate that doesn't move like a sungrazer (the
 file's "paged" false: pointed more than live.PAGE_HEADING off the Sun, or
 slower than the instrument's page_speed, on CCOR-1 fitting no Kreutz
 orbit, "off_orbit", or on CCOR-2 with a line through it, "on_line"; older
@@ -53,8 +54,7 @@ def _send(server, topic, title, lines, priority, tags, click=None):
 def compose(d, name):
     """(title, lines, priority, tags) for an alert or confirmed file's
     contents, or None when nothing should be sent: a comet somebody has
-    already reported gets one quiet message, at the confirmed stage, and
-    a candidate the watcher didn't page (off sunward, too slow, off any
+    already reported in this instrument gets nothing, and a candidate the watcher didn't page (off sunward, too slow, off any
     Kreutz orbit, or found by the orbit search alone without
     --orbit-pages) none until it's confirmed, and then a quiet one unless
     the orbit search found it."""
@@ -66,12 +66,7 @@ def compose(d, name):
     cmd = INSTRUMENT.measure_cmd(f"alerts/{name}")
     who = f"kreutz {INSTRUMENT.label}"
     if known:
-        if not confirmed:
-            return None
-        posted = known["posted_utc"].replace("T", " ")[:16]
-        return (f"{who}: known comet, {known['reporter']}'s ({known['telescope']})",
-                [f"Reported {posted} UTC, matched by {known['how']}; held {d['frames']} frames, {d['note']}.",
-                 "Measure it anyway:", cmd], "low", "comet")
+        return None
     far = isinstance(d, dict) and (d.get("paged") is False if "paged" in d else d.get("near_lane") is False)
     if far and not confirmed:
         return None
@@ -173,7 +168,7 @@ def held_because(d):
     if not isinstance(d, dict):
         return "not paged"
     if d.get("known"):
-        return "known comet"
+        return f"known comet ({d['known'].get('reporter')}'s)"
     if d.get("found_by") == "orbit":
         return "found by the orbit search only"
     if d.get("on_line"):
@@ -195,7 +190,8 @@ def post(alert_path):
     d = json.load(open(p))
     msg = compose(d, p.name)
     if msg is None:
-        print(f"{p.name}: {held_because(d)} at the candidate stage; not notifying")
+        when = "" if isinstance(d, dict) and d.get("known") else " at the candidate stage"
+        print(f"{p.name}: {held_because(d)}{when}; not notifying")
         return
     _send(server, topic, *msg, click=status_url())
 

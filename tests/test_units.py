@@ -347,10 +347,10 @@ def test_notify_is_quiet_about_known_comets():
     known = {"reporter": "Jiangao Ruan", "id": "r1", "telescope": "CCOR1",
              "posted_utc": "2026-10-09T11:48:34Z", "kind": "Potential Comet", "how": "position"}
     assert notify.compose({"track": track, "known": known}, "a.json") is None
-    title, lines, prio, _ = notify.compose({"kind": "confirmed", "track": track, "known": known,
-                                            "frames": 5, "note": "ok"}, "a.confirmed.json")
-    assert prio == "low" and "Jiangao Ruan" in title and "2026-10-09 11:48 UTC" in lines[0]
-    assert lines[-1].endswith("kreutz.report /data/live/alerts/a.confirmed.json")
+    # nor at confirmation, nor as a stack REPORT: nothing to do about it
+    for kind in ("confirmed", "report"):
+        assert notify.compose({"kind": kind, "track": track, "known": known, "frames": 5, "note": "ok",
+                               "stack": {"z": 30.0, "n": 20}, "page": "report"}, "a.confirmed.json") is None
     title, _, prio, _ = notify.compose({"track": track, "other_instruments": []}, "a.json")
     assert (title, prio) == ("kreutz CCOR-1: candidate, UNREPORTED", "high")
     title, _, prio, _ = notify.compose({"kind": "confirmed", "track": track, "other_instruments": [],
@@ -1323,7 +1323,7 @@ def test_notify_logs_why_a_candidate_was_held():
     d = {"track": [], "paged": False, "heading_deg": 7, "lane_px": 74}
     assert notify.held_because(dict(d, found_by="orbit")) == "found by the orbit search only"
     assert "off sunward" in notify.held_because(d) and "lane" not in notify.held_because(d)
-    assert notify.held_because(dict(d, known={"reporter": "x"})) == "known comet"
+    assert notify.held_because(dict(d, known={"reporter": "x"})) == "known comet (x's)"
 
 
 def test_orbit_fit_recovers_a_kreutz_track():
