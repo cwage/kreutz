@@ -1594,7 +1594,9 @@ def main():
                     # line rather than a point, in its brightest frame or in
                     # its own stack (CCOR-2's radial striping)
                     vetoed = False
-                    for kind, check in (("ghost", same_as_yesterday), ("line", line_like), ("line", line_stack)):
+                    checks = [("ghost", same_as_yesterday)] + ([("line", line_like)] if INSTRUMENT.line_like else []) \
+                        + [("line", line_stack)]
+                    for kind, check in checks:
                         try:
                             why = check(seq, last, c["x"], c["y"], c["vx"], c["vy"])
                         except Exception as e:  # a check that can't run mustn't hold up an alert

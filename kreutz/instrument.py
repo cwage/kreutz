@@ -64,6 +64,15 @@ class Instrument:
     # make that date's lane, and its search sector when angle_center is
     # None (lane.season_samples); None: one lane all year.
     season_days: int = None
+    # Whether a track whose peak is a line in single frames is vetoed
+    # (vet.line_like), besides one whose own stack is a line
+    # (vet.line_stack). CCOR-1's artifacts are short bright bars (10-18 px,
+    # 4-8 sigma) its stack check misses in 7 of 9; LASCO's are streamer
+    # rays (12-60 px, 3-4.6 sigma) and every C2 one also failed the stack
+    # check, while a bright C2 comet's head and short tail made a 10-15 px
+    # 4-5:1 bar at 5-7 sigma in 3 frames and stacked to a point:
+    # Ujfalussy's of 2026-11-13, vetoed (scripts/live-replay.py).
+    line_like: bool = True
 
     @property
     def cadence(self):
@@ -118,7 +127,7 @@ class Instrument:
 # any one month (2024-2026 reports), and C2 follows. So the lane and the
 # search sector are the season's, from the samples within a month of the
 # date in any year (lane.season_samples).
-_LASCO = dict(edge_px=14, max_missing=2, season_days=15)
+_LASCO = dict(edge_px=14, max_missing=2, season_days=15, line_like=False)
 # Stars down to just outside the search's inner edge: CCOR's 350 px would
 # leave out most of C3's field (it ends ~540 px out). Bright stars leave
 # residue past CCOR's 4 px mask, which stacks into slow tracks drifting
