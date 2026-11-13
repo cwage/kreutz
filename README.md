@@ -289,8 +289,11 @@ search's stacked chain holds an object, and nothing is measured, keeps
 the follow-up alive but counts toward neither confirmation nor the report
 block; an object is confirmed on a frame it was measured in. With
 `--render`, a confirmed object's cutouts and pictures are made in the
-background under `data/render/`, and remade every few frames while it stays
-in view, so the pictures grow with the passage.
+background under `data/render/`, and remade while it stays in view, so the
+pictures grow with the passage: every 4 frames early on, then whenever the
+passage has grown by a quarter (each render redoes the whole passage, so a
+comet followed for 100 frames is remade about every 6 hours). Renders run
+at the lowest CPU priority.
 A comet somebody has already reported gets the same files, follow-up and
 pictures, logged as `reported` rather than `alert`; the notification for it
 is a single low-priority one at the confirmed stage.

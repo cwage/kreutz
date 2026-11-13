@@ -396,6 +396,22 @@ def test_state_round_trips_and_expires(tmp_path):
     assert live.load_state(t0, span, tmp_path / "none.json") == (set(), [], [])
 
 
+def test_progress_renders_space_out_and_run_niced(monkeypatch, tmp_path):
+    # a progress render redoes the whole passage: hourly early, then a
+    # quarter of the passage so far (Ruan's comet at ~100 frames: ~6 h)
+    assert live.render_every(5) == live.RENDER_EVERY == 4
+    assert live.render_every(40) == 10 and live.render_every(100) == 25
+    calls = []
+    monkeypatch.setattr(live, "LIVE", tmp_path)
+    (tmp_path / "alerts").mkdir()
+    monkeypatch.setattr(live.subprocess, "Popen", lambda args, **kw: calls.append(args) or object())
+    f = {"alert": "/data/live/alerts/x.json", "points": [0] * 30, "since_render": 9,
+         "track": [{"time": "2026-11-12T01:15:00", "x": 1.0, "y": 2.0, "vx": -3.5, "vy": -4.5}]}
+    live.start_render(f)
+    assert calls[0][:4] == ["nice", "-n", "19", "sh"] and "kreutz.render" in calls[0][-1]
+    assert f["since_render"] == 0
+
+
 def test_pictures_lists_what_a_render_has(tmp_path):
     assert live.pictures("none", tmp_path) is None
     d = tmp_path / "x"
