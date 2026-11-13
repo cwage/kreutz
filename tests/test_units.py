@@ -1878,6 +1878,15 @@ def test_other_instrument_report_must_be_where_the_track_is(monkeypatch):
     assert r == pytest.approx(29.0, abs=0.5) and pa == pytest.approx(-65, abs=1.5)
 
 
+def test_lasco_vetoes_lines_by_the_stack_only():
+    # Ujfalussy's C2 comet of 2026-11-13: a 10-15 px bar at 5-7 sigma in
+    # 3 frames (vet.line_like) but a point in its own stack; every C2
+    # line veto before it was a streamer ray that line_stack caught too
+    from kreutz.instrument import INSTRUMENTS
+    assert not INSTRUMENTS["c2"].line_like and not INSTRUMENTS["c3"].line_like
+    assert INSTRUMENTS["ccor1"].line_like and INSTRUMENTS["ccor2"].line_like
+
+
 def test_chain_links_an_accelerating_comet():
     # Scott Holdren's CCOR-2 comet of 2026-11-11, from our own windows
     prev = {"x": 1353.0, "y": 1855.0, "vx": -3.5, "vy": -4.0}
