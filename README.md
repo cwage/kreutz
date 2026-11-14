@@ -239,8 +239,10 @@ is written with the report block ready for Sungrazer's form.
   don't persist (the comet of 2026-11-09 01:45 fit no family orbit and
   stacked to z 31 over the morning). One REPORT per object; a confirmation
   after it is a quiet page with the measured block.
-- `watching` (low): a candidate that passed the page gates but whose stack
-  is still weak. No action; it pages REPORT if it gets there.
+- Nothing for a candidate that passed the page gates but whose stack is
+  still weak (`watching` on the status page): it pages REPORT if it gets
+  there. Its low "no action" page was noise (eleven in five days, every
+  one faded unreported).
 - Nothing for a comet matched to somebody's report in the same instrument,
   at any stage; the status page shows it with the report.
 - Nothing for a candidate held by a gate (below) until it's confirmed, and

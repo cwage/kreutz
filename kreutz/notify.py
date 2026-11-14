@@ -14,7 +14,11 @@ which measures the object and prints the block for Sungrazer's form.
 A comet somebody has already reported in this instrument (the file's
 "known") gets nothing at any stage: there's nothing to do about it, and
 the status page has it. (It had one low-priority message at confirmation,
-which was noise.) Nor does a candidate that doesn't move like a sungrazer (the
+which was noise.) Nor does a candidate that passed the gates with a weak
+stack (the file's "page": "watching"): it pages REPORT if the stack gets
+there or the follow-up confirms it, and the low "watching, no action"
+message it had was noise, eleven in five days (2026-11-10..14) and every
+one faded unreported. Nor does a candidate that doesn't move like a sungrazer (the
 file's "paged" false: pointed more than live.PAGE_HEADING off the Sun, or
 slower than the instrument's page_speed, on CCOR-1 fitting no Kreutz
 orbit, "off_orbit", or on CCOR-2 with a line through it, "on_line"; older
@@ -54,10 +58,12 @@ def _send(server, topic, title, lines, priority, tags, click=None):
 def compose(d, name):
     """(title, lines, priority, tags) for an alert or confirmed file's
     contents, or None when nothing should be sent: a comet somebody has
-    already reported in this instrument gets nothing, and a candidate the watcher didn't page (off sunward, too slow, off any
-    Kreutz orbit, or found by the orbit search alone without
-    --orbit-pages) none until it's confirmed, and then a quiet one unless
-    the orbit search found it."""
+    already reported in this instrument gets nothing, nor does one that
+    passed the gates with a weak stack ("watching") until the stack reads
+    real or it's confirmed, and a candidate the watcher didn't page (off
+    sunward, too slow, off any Kreutz orbit, or found by the orbit search
+    alone without --orbit-pages) none until it's confirmed, and then a
+    quiet one unless the orbit search found it."""
     track = d["track"] if isinstance(d, dict) else d
     c = track[-1]
     others = d.get("other_instruments", []) if isinstance(d, dict) else []
@@ -134,11 +140,11 @@ def evidence(d, others):
 def verdict_page(d, who, others, confirmed):
     """(title, lines, priority, tags) for a file from a watcher that
     stacks. REPORT (urgent) when the stack reads real or the follow-up
-    confirmed the object, with the form block in the page; watching (low)
-    for a candidate that passed the gates with a weak stack; nothing for
-    a confirmation after a REPORT page already went (it's on the status
+    confirmed the object, with the form block in the page; nothing for a
+    candidate that passed the gates with a weak stack ("watching": it's
+    on the status page, and pages REPORT if it gets there), nor for a
+    confirmation after a REPORT page already went (it's on the status
     page) except the measured block, quietly."""
-    st = d.get("stack") or {}
     where = f"{INSTRUMENT.label} {d['track'][0]['time'][11:16]}-{d['track'][-1]['time'][11:16]} UTC"
     block = ["Form (" + INSTRUMENT.telescope + ", Kreutz, " + d['track'][-1]['time'][:10] + "):"] + \
         (d.get("report") or [])
@@ -155,11 +161,6 @@ def verdict_page(d, who, others, confirmed):
     if d.get("page") == "report":
         return (f"{who}: REPORT, stack says real" if not others else f"{who}: stack says real, likely known",
                 [f"{where}. {evidence(d, others)}"] + block, "urgent" if not others else "default", "comet,clipboard")
-    if d.get("page") == "watching":
-        z = f"z {st['z']}" if st.get("z") is not None else "no stack"
-        return (f"{who}: watching ({z}), no action",
-                [f"{where}. {evidence(d, others)}", "Pages REPORT if the stack gets there or five frames confirm it."],
-                "low", "eyes")
     return None
 
 
@@ -169,6 +170,9 @@ def held_because(d):
         return "not paged"
     if d.get("known"):
         return f"known comet ({d['known'].get('reporter')}'s)"
+    if d.get("page") == "watching":
+        z = (d.get("stack") or {}).get("z")
+        return f"watching (stack z {z}), no action" if z is not None else "watching (no stack yet), no action"
     if d.get("found_by") == "orbit":
         return "found by the orbit search only"
     if d.get("on_line"):
