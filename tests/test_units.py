@@ -208,8 +208,8 @@ def test_verdict_pages():
     base = {"track": track, "other_instruments": [], "known": None, "paged": True, "lane_px": 10, "heading_deg": 9,
             "report": ["0706 636 713", "0730 633 708"]}
     weak = dict(base, page="watching", stack={"n": 6, "z": 3.1, "null_mean": 2.0, "null_std": 0.9, "stack": 4.8, "beaten": 1})
-    title, lines, prio, _ = notify.compose(weak, "a.json")
-    assert "watching" in title and "no action" in title and prio == "low" and "stack z 3.1" in lines[0]
+    assert notify.compose(weak, "a.json") is None  # a weak stack: on the status page, no message
+    assert notify.held_because(weak) == "watching (stack z 3.1), no action"
     strong = dict(weak, page="report", stack=dict(weak["stack"], z=11.2))
     title, lines, prio, _ = notify.compose(strong, "a.json")
     assert title.endswith("REPORT, stack says real") and prio == "urgent" and lines[-1] == "0730 633 708"
@@ -223,7 +223,7 @@ def test_verdict_pages():
     title, _, prio, _ = notify.compose(dict(conf, report_paged=True), "a.confirmed.json")
     assert "measured block" in title and prio == "low"  # the REPORT page already went
     assert notify.compose(dict(weak, paged=False, page=None), "a.json") is None  # held by a gate: as before
-    assert notify.compose(dict(weak, other_instruments=[{"reporter": "X", "telescope": "C3"}]), "a.json")[2] == "low"
+    assert notify.compose(dict(weak, other_instruments=[{"reporter": "X", "telescope": "C3"}]), "a.json") is None
 
 
 def test_parse_report_with_no_group_keeps_its_points():
