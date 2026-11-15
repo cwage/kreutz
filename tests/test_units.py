@@ -420,6 +420,31 @@ def test_lasco_knows_a_comet_our_other_watchers_saw(monkeypatch, tmp_path):
     assert notify.compose({"track": track, "known": k, "paged": True, "page": None}, "a.json") is None
 
 
+def test_a_followed_lasco_comet_is_named_by_a_later_sighting(monkeypatch):
+    # Ruan's comet, alerted and confirmed in C2 before the sightings check
+    # existed, read UNREPORTED for its whole passage
+    k = {"reporter": "Jiangao Ruan", "id": "report_jr_20261114190228", "telescope": "CCOR2",
+         "posted_utc": "2026-11-15T00:02:28Z", "kind": "Potential Comet", "group": "Kreutz", "how": "sky",
+         "seen_in": "CCOR1"}
+    monkeypatch.setattr(live, "SIGHTINGS", True)
+    seen = []
+    monkeypatch.setattr(live, "sighted", lambda track: seen.append(track) or k)
+    track = [{"time": "2026-11-15T19:12:33", "x": 528.0, "y": 942.0, "vx": -6.0, "vy": -11.0}]
+    f = {"alert": "/data/live-c2/alerts/20261115T1912_528_942.json", "track": track, "known": None,
+         "points": [(datetime(2026, 11, 15, 18, 0, 30), 561.0, 1004.0, 5.0)], "vx": -6.0, "vy": -11.0}
+    live.recheck([f], datetime(2026, 11, 15, 21, 0), None)
+    assert f["known"] is k and len(seen) == 1
+    assert [c["time"] for c in seen[0]] == ["2026-11-15T19:12:33", "2026-11-15T18:00:30"]
+    live.recheck([f], datetime(2026, 11, 15, 21, 12), None)
+    assert len(seen) == 1  # known now: not looked up again
+    # its earlier log lines take the name too
+    f |= {"misses": 0, "t": datetime(2026, 11, 15, 21, 0), "x": 500.0, "y": 890.0}
+    alert = {"kind": "alert", "decided_utc": "2026-11-15T20:44:54", "first": "2026-11-15T18:48:34",
+             "last": "2026-11-15T19:12:33", "x": 528.0, "y": 942.0, "alert": f["alert"]}
+    s = live.status([], [f], datetime(2026, 11, 15, 21, 0), [alert], datetime(2026, 11, 15, 21, 5))
+    assert s["recent"][0]["known"]["id"] == k["id"] and s["following"][0]["known"]["id"] == k["id"]
+
+
 def test_notify_is_quiet_about_known_comets():
     from kreutz import notify
     track = [{"time": "2026-10-09T11:30:25", "x": 1893.0, "y": 1219.0, "vx": -9.0, "vy": -2.0}]

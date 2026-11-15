@@ -368,7 +368,11 @@ def recheck(pending, t, reps):
     now against the latest reports: a report of the comet we're following
     usually arrives hours after our alert. Settled is a match by orbit
     where there are orbits (a match by position there is only provisional:
-    it can be the wrong comet on the same path), else by position."""
+    it can be the wrong comet on the same path), else by position. On
+    LASCO, one still known as nothing is matched against our other
+    watchers' sightings too (sighted): those come in as they follow it,
+    and Ruan's comet, alerted in C2 before the check existed, read
+    UNREPORTED for its whole passage while CCOR-1 and CCOR-2 had it."""
     settled = ("orbit",) if ORBIT_MATCH else ("position", "orbit")
     for f in pending:
         old = f.get("known") or {}
@@ -377,6 +381,12 @@ def recheck(pending, t, reps):
             if k and (k["id"], k["how"]) != (old.get("id"), old.get("how")):
                 f["known"] = k
                 print(f"{t:%H:%M} {Path(f['alert']).stem} is {who(k)}, by {k['how']}", file=sys.stderr)
+        if SIGHTINGS and not (f.get("known") or {}).get("id"):
+            k = sighted(passage(f))
+            if k:
+                f["known"] = k
+                print(f"{t:%H:%M} {Path(f['alert']).stem} is {who(k)}, by sky (seen in {k['seen_in']})",
+                      file=sys.stderr)
 
 
 PASSAGE = timedelta(hours=INSTRUMENT.passage)  # a Kreutz comet stays in the field about this long after it's found
@@ -623,8 +633,8 @@ def sighted(track):
     """The report whose comet one of our other watchers saw where `track`
     is (our_sightings, sky_agrees at SIGHTING_*_SLOP), as a known record
     with how "sky" and "seen_in" the watcher's instrument; None."""
-    fits = [o for o in our_sightings(datetime.fromisoformat(track[0]["time"]),
-                                     datetime.fromisoformat(track[-1]["time"]))
+    times = [datetime.fromisoformat(c["time"]) for c in track]  # a passage() isn't in time order
+    fits = [o for o in our_sightings(min(times), max(times))
             if sky_agrees(o, track, SIGHTING_R_SLOP, SIGHTING_PA_SLOP)]
     if not fits:
         return None
@@ -1461,12 +1471,16 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
             "pictures": rendered(name), "rendering": rendering(f)}, f.get("decided_utc"), f.get("confirmed_utc")))
+    # what a followed object is known as now, for its earlier log lines
+    # (an alert and a confirmation decided before a report or a sighting
+    # named it)
+    known_now = {Path(f["alert"]).stem: f.get("known") for f in pending if f.get("known")}
     decisions = []
     for r in recent:
         name = Path(r["alert"]).stem if r.get("alert") else None
         files = files_of(name) if name else {"alert": None, "confirmed": None}
         track = (files["alert"] or {}).get("track")
-        known = with_url(r.get("known"), r.get("report"))
+        known = with_url(r.get("known") or known_now.get(name), r.get("report"))
         found = (files["alert"] or {}).get("decided_utc") or (r["decided_utc"] if r["kind"] in ("alert", "reported") else None)
         confirmed = (files["confirmed"] or {}).get("decided_utc")
         decisions.append(with_firsts({
