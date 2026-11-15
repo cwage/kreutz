@@ -341,6 +341,39 @@ def test_status_stages_and_paths(monkeypatch):
     assert s["following"][0]["report"] is None
 
 
+def test_status_badge_counts_from_the_first_find_of_the_comet():
+    # Ruan's CCOR-2 comet of 2026-11-14 (posted 00:02 on 11-15): CCOR-1
+    # matched it at 01:47, lost it, found it again at 14:16, and the page
+    # said "reported 14.2 h before we found it" on the second alert
+    rid = "report_jr_20261114190228"
+    at = {"first": "2026-11-15T13:30:25", "last": "2026-11-15T14:00:25", "x": 1240.0, "y": 1311.0}
+    log = [{"kind": "reported", "decided_utc": "2026-11-15T01:47:47", "known": {"id": rid},
+            "report": f"Jiangao Ruan {rid} (CCOR2)", "alert": "/data/live/alerts/20261115T0130_1552_1551.json"},
+           {"kind": "faded", "decided_utc": "2026-11-15T03:41:09", "alert": "/data/live/alerts/20261115T0130_1552_1551.json"},
+           {"kind": "reported", "decided_utc": "2026-11-15T14:16:11", "known": {"id": rid},
+            "report": f"Jiangao Ruan {rid} (CCOR2)", "alert": "/data/live/alerts/20261115T1400_1240_1311.json"},
+           {"kind": "confirmed", "decided_utc": "2026-11-15T14:30:49", "known": {"id": rid},
+            "alert": "/data/live/alerts/20261115T1400_1240_1311.json"},
+           {"kind": "reported", "decided_utc": "2026-11-14T09:00:00", "report": "Somebody report_xx_20261114040000 (C3)"}]
+    firsts = live.first_finds(log)
+    assert firsts[rid] == ("2026-11-15T01:47:47", "2026-11-15T14:30:49")
+    assert firsts["report_xx_20261114040000"] == ("2026-11-14T09:00:00", None)  # an older line: the id from its string
+    reps = [{"id": rid, "reporter": "Jiangao Ruan", "telescope": "CCOR2", "group": "Kreutz",
+             "kind": "Potential Comet", "posted_utc": "2026-11-15T00:02:28Z", "points": []}]
+    log = [dict(at, **r) for r in log]
+    s = live.status([], [], datetime(2026, 11, 15, 14, 30, 25), [log[3], log[2]], datetime(2026, 11, 15, 14, 31),
+                    reps=reps, firsts=firsts)
+    conf, rep = s["recent"]
+    assert rep["found_utc"] == "2026-11-15T14:16:11"  # the alert's own
+    assert rep["first_found_utc"] == "2026-11-15T01:47:47" and conf["first_found_utc"] == "2026-11-15T01:47:47"
+    assert conf["first_confirmed_utc"] == "2026-11-15T14:30:49"
+    # found before anyone reported it: the alert's own time is the earlier one
+    early = dict(log[2], kind="alert", decided_utc="2026-11-14T23:00:00")
+    r, = live.status([], [], datetime(2026, 11, 15, 0, 0), [early], datetime(2026, 11, 15, 0, 5),
+                     reps=reps, firsts=firsts)["recent"]
+    assert r["first_found_utc"] == "2026-11-14T23:00:00"
+
+
 def test_notify_is_quiet_about_known_comets():
     from kreutz import notify
     track = [{"time": "2026-10-09T11:30:25", "x": 1893.0, "y": 1219.0, "vx": -9.0, "vy": -2.0}]
