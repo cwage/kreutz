@@ -1285,8 +1285,43 @@ def pictures(name, root=None):
     return out
 
 
+REPORT_ID = re.compile(r"report_[a-z]+_\d{14}")
+
+
+def first_finds(log):
+    """{report id: (first found, first confirmed)} over a watcher's log:
+    when it first alerted on or matched anything to each report, and when
+    it first confirmed it. A faint comet the follow-up loses is found again
+    later as a new alert with its own times (Ruan's CCOR-2 comet: found on
+    CCOR-1 at 01:47 on 2026-11-15, again at 14:16), and the status page's
+    badge measured that one, "reported 14.2 h before we found it" for a
+    lag of 1.8 h."""
+    out = {}
+    for r in log:
+        rid = (r.get("known") or {}).get("id")
+        if not rid:
+            m = REPORT_ID.search(r.get("report") or "")
+            rid = m.group(0) if m else None
+        t = r.get("decided_utc")
+        if not rid or not t:
+            continue
+        found, conf = out.get(rid, (None, None))
+        if r.get("kind") in ("alert", "reported"):
+            found = earliest(found, t)
+        elif r.get("kind") == "confirmed":
+            conf = earliest(conf, t)
+        out[rid] = (found, conf)
+    return out
+
+
+def earliest(*times):
+    """The earliest of some ISO times, ignoring Nones; None if there are none."""
+    times = [t for t in times if t]
+    return min(times) if times else None
+
+
 def status(chains, pending, t, recent, now, rendered=lambda name: None,
-           files_of=lambda name: {"alert": None, "confirmed": None}, reps=None, waiting=None):
+           files_of=lambda name: {"alert": None, "confirmed": None}, reps=None, waiting=None, firsts=None):
     """The status page's data: what's open, what's being followed and at
     which stage, and the last decisions. Paths are relative to the live
     directory; "measure_prefix" + an object's "alert" is its kreutz.report command.
@@ -1295,8 +1330,14 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
     now in reps, else the guess by time it was filed under.
     rendered(name) gives a render's pictures() or None; files_of(name) an
     alert's files (alert_files), which carry the full track and the times
-    the object was found and confirmed, whatever the log window shows."""
+    the object was found and confirmed, whatever the log window shows.
+    firsts (first_finds over the whole log) gives each matched report's
+    first_found_utc and first_confirmed_utc: the comet's, not the alert's."""
     longest = max(chains, key=len) if chains else None
+
+    def with_firsts(e, found, confirmed):
+        f, c = (firsts or {}).get((e.get("report") or {}).get("id"), (None, None))
+        return dict(e, first_found_utc=earliest(f, found), first_confirmed_utc=earliest(c, confirmed))
 
     by_id = {r["id"]: r for r in reps or []}
 
@@ -1318,7 +1359,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
     following = []
     for f in pending:
         name = Path(f["alert"]).stem
-        following.append({
+        following.append(with_firsts({
             "name": name, "alert": f"alerts/{name}.json", "gif": f"alerts/{name}.gif",
             "stage": "confirmed" if f.get("confirmed") else "candidate",
             "points": len(f["points"]), "misses": f["misses"],
@@ -1332,22 +1373,23 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "near_lane": f.get("near_lane"),  # files from before the heading gate
             "decided_utc": f.get("decided_utc"), "confirmed_utc": f.get("confirmed_utc"),
             "report": with_url(best_report(f.get("known"), seen(f), reps, held=bool(f.get("confirmed")))),
-            "pictures": rendered(name), "rendering": rendering(f)})
+            "pictures": rendered(name), "rendering": rendering(f)}, f.get("decided_utc"), f.get("confirmed_utc")))
     decisions = []
     for r in recent:
         name = Path(r["alert"]).stem if r.get("alert") else None
         files = files_of(name) if name else {"alert": None, "confirmed": None}
         track = (files["alert"] or {}).get("track")
         known = with_url(r.get("known"), r.get("report"))
-        decisions.append({
+        found = (files["alert"] or {}).get("decided_utc") or (r["decided_utc"] if r["kind"] in ("alert", "reported") else None)
+        confirmed = (files["confirmed"] or {}).get("decided_utc")
+        decisions.append(with_firsts({
             "kind": r["kind"], "decided_utc": r["decided_utc"], "first": r["first"], "last": r["last"],
             "x": r["x"], "y": r["y"], "name": name, "gif": f"alerts/{name}.gif" if name else None,
             "known": known, "how": r.get("how"), "frames": r.get("frames"), "note": r.get("note"),
             "where": r.get("where"),
-            "found_utc": (files["alert"] or {}).get("decided_utc") or (r["decided_utc"] if r["kind"] in ("alert", "reported") else None),
-            "confirmed_utc": (files["confirmed"] or {}).get("decided_utc"),
+            "found_utc": found, "confirmed_utc": confirmed,
             "report": with_url(best_report(known, track, reps, held=r["kind"] in ("confirmed", "ended"))),
-            "pictures": rendered(name) if name else None})
+            "pictures": rendered(name) if name else None}, found, confirmed))
     return {"instrument": INSTRUMENT.label, "measure_prefix": INSTRUMENT.measure_cmd(""), "real_z": REAL_Z,
             "updated_utc": now.isoformat(timespec="seconds"), "window_utc": t.isoformat(timespec="seconds"),
             "open": len(chains), "longest": len(longest) if longest else 0,
@@ -1357,11 +1399,18 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
 
 def write_status(chains, pending, t, reps=None, waiting=None, notify=None):
     p = LIVE / "log.jsonl"
-    recent = [json.loads(ln) for ln in open(p).readlines()[-STATUS_RECENT:]] if p.exists() else []
+    lines = open(p).readlines() if p.exists() else []
+    recent = [json.loads(ln) for ln in lines[-STATUS_RECENT:]]
     recent.reverse()
+    log = []
+    for ln in lines:
+        try:
+            log.append(json.loads(ln))
+        except ValueError:
+            continue
 
     s = status(chains, pending, t, recent, datetime.now(timezone.utc).replace(tzinfo=None),
-               rendered=pictures, files_of=alert_files, reps=reps, waiting=waiting)
+               rendered=pictures, files_of=alert_files, reps=reps, waiting=waiting, firsts=first_finds(log))
     s["notify"] = notify  # does this watcher page (--notify)? the audit's digest counts pages only where it does
     tmp = LIVE / "status.json.tmp"
     tmp.write_text(json.dumps(s, indent=1))

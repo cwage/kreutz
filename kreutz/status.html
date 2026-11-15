@@ -143,7 +143,7 @@ function card(f) {
   const what = f.pictures ? 'render so far; click for more' : 'vetting animation';
   return `<div class="row">
     <img src="${pic}" alt="${what}" title="${what}" loading="lazy" ${opener(f._key)}>
-    <div>${instBadge(f)}${stage}${reportBadge(f.report, f._inst)}${reportedHere(f.report) ? leadBadge(f.report, f.decided_utc, f.confirmed_utc) : ''}
+    <div>${instBadge(f)}${stage}${reportBadge(f.report, f._inst)}${reportedHere(f.report) ? leadBadge(f.report, f.first_found_utc || f.decided_utc, f.first_confirmed_utc || f.confirmed_utc) : ''}
       <div class="meta">${esc(f.name)} · first seen ${hhmm(f.first)} · last seen ${hhmm(f.last_seen)}
         · at ${f.x.toFixed(0)},${f.y.toFixed(0)} · ${Math.hypot(f.vx, f.vy).toFixed(1)} px/frame
         ${f.misses ? `· missing ${f.misses} frame(s)` : ''}${f.rendering ? ' · rendering…' : ''}
@@ -184,10 +184,13 @@ function row(hist) {
   const matched = last.report || [...hist].reverse().map(r => r.report).find(Boolean) || null;
   // noise that faded, or a star, isn't 'unreported'; only a real match is worth a badge
   const report = JUNK.includes(last.kind) && !matched ? '' : reportBadge(matched, last._inst);
-  // when it was found and confirmed: on the record itself (from the alert
-  // files), else from whatever of its history is in the window
-  const found = last.found_utc || (hist.find(r => ['alert', 'reported'].includes(r.kind)) || {}).decided_utc;
-  const confirmed = last.confirmed_utc || (hist.find(r => r.kind === 'confirmed') || {}).decided_utc;
+  // when the comet was first found and confirmed here, over every alert
+  // matched to the same report (a faint one lost and found again gets a
+  // new alert, which isn't when we found it), else this alert's own times
+  // (from its files), else whatever of its history is in the window
+  const firstOf = k => [...hist].reverse().map(r => r[k]).find(Boolean);
+  const found = firstOf('first_found_utc') || last.found_utc || (hist.find(r => ['alert', 'reported'].includes(r.kind)) || {}).decided_utc;
+  const confirmed = firstOf('first_confirmed_utc') || last.confirmed_utc || (hist.find(r => r.kind === 'confirmed') || {}).decided_utc;
   const lead = report && reportedHere(matched) ? leadBadge(matched, found, confirmed) : '';
   const extra = last.kind === 'confirmed' ? ` ${last.frames} frames, ${esc(last.note)}`
               : last.kind === 'ended' ? ` after ${last.frames} frames`
