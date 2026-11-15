@@ -95,7 +95,7 @@ def compose(d, name):
     elif far and d.get("off_orbit"):
         hint += f"; fits no Kreutz orbit ({d['orbit_rms']}\")"
     elif far:
-        hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d
+        hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d and d.get("page_gate") != "lane"
                  else f"; {d['lane_px']} px off the Kreutz lane")
     if confirmed and far and d.get("found_by") != "orbit" and not d.get("on_line"):
         return (f"{who}: confirmed, unlikely Kreutz",
@@ -179,6 +179,8 @@ def held_because(d):
         return f"a line runs through it ({d['line_score']})"
     if d.get("off_orbit"):
         return f"fits no Kreutz orbit ({d['orbit_rms']}\")"
+    if d.get("page_gate") == "lane":
+        return f"not paged ({d.get('lane_px')} px off the Kreutz lane or too slow)"
     if "heading_deg" in d:
         return f"not paged ({d['heading_deg']} deg off sunward or too slow)"
     return f"{d.get('lane_px')} px off the Kreutz lane"

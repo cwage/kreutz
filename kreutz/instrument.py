@@ -73,6 +73,15 @@ class Instrument:
     # 4-5:1 bar at 5-7 sigma in 3 frames and stacked to a point:
     # Ujfalussy's of 2026-11-13, vetoed (scripts/live-replay.py).
     line_like: bool = True
+    # px: when set, a candidate is paged on its distance from the Kreutz
+    # lane (lane.lane_px) instead of its heading at the Sun
+    # (live.PAGE_HEADING). In C2, Kreutz comets curve in toward the Sun:
+    # of its nine alerts that turned out real (2026-10-24..11-15), four
+    # pointed 22-42 deg off sunward and weren't paged (the user's own comet
+    # of 11-08, Ruan's entering C2 on 11-15), while all nine ran 6-30 px
+    # from the lane; at 40 px, eleven of its false alerts would have paged
+    # against twenty-one by heading.
+    page_lane_px: float = None
 
     @property
     def cadence(self):
@@ -206,7 +215,8 @@ INSTRUMENTS = {
                      "https://umbra.nascom.nasa.gov/pub/lasco/lastimage/level_05/",
                      "https://umbra.nascom.nasa.gov/pub/lasco_level05/", True, False,
                      200, 700, None, None, (510.2, 516.5), False, None, 8, 4.0, 12,
-                     source="lasco", cadence_min=12, shape=(1024, 1024), speed_max=24.0, star_min_r=_STAR_MIN_R["c2"], **_LASCO),
+                     source="lasco", cadence_min=12, shape=(1024, 1024), speed_max=24.0, star_min_r=_STAR_MIN_R["c2"],
+                     page_lane_px=40.0, **_LASCO),
     "c3": Instrument("c3", "C3", "LASCO C3", "05",
                      "https://umbra.nascom.nasa.gov/pub/lasco/lastimage/level_05/",
                      "https://umbra.nascom.nasa.gov/pub/lasco_level05/", True, False,

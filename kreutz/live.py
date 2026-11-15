@@ -46,7 +46,9 @@ On CCOR-1 and CCOR-2 a report, from either of them, is matched to a
 track by one Kreutz orbit through both ("by orbit"). LASCO's reports
 can't be: a track in the Kreutz lane (lane.in_lane) while LASCO has a
 Kreutz comet in view counts as that comet, matched "by time+lane"; the
-alert for anything else lists such reports as a hint.
+alert for anything else lists such reports as a hint. A LASCO track
+where one of our other watchers saw a reported comet, at the same place
+on the sky at about the same time, is that comet ("by sky", sighted).
 
 --notify CMD runs CMD with the alert's .json path appended, e.g.
 --notify "python -m kreutz.notify" to post to an ntfy topic (notify.py);
@@ -62,7 +64,9 @@ scatter out to 90. (This replaced a gate on distance to the archived
 Kreutz tracks, which the stream outgrows: the comet of 2026-10-21 11:00,
 Ruan's, ran 273 px from the nearest track, and its first page was held
 back for 15 minutes.) "lane_px", that distance, is still written for
-the record. On CCOR-1 a pageworthy track must also fit a Kreutz family
+the record. C2 pages on it instead of the heading (page_lane_px, "page_gate":
+"lane"): its comets curve in, and four of its nine real ones pointed
+22-42 deg off sunward. On CCOR-1 a pageworthy track must also fit a Kreutz family
 orbit (orbitsearch.orbit_of) to OFF_ORBIT_RMS, or it's "off_orbit" and
 held the same way, with "orbit_rms" written. Replayed over CCOR-1's
 alerts of 2026-10-08..28, every one matched to a CCOR-1 report fit to
@@ -527,7 +531,7 @@ def _lasco_turned(telescope, t, x, y):
     return float(sx + dx * np.cos(th) - dy * np.sin(th)), float(sy + dx * np.sin(th) + dy * np.cos(th))
 
 
-def sky_agrees(o, track):
+def sky_agrees(o, track, r_slop=None, pa_slop=None):
     """Is other-instrument report `o`'s comet where our `track`'s object is,
     by sky position? True, False, or None when either place can't be had.
     The report's newest point is compared with our point nearest it in
@@ -540,7 +544,7 @@ def sky_agrees(o, track):
     c = min(track, key=lambda c: abs((datetime.fromisoformat(c["time"]) - t_o).total_seconds()))
     t = datetime.fromisoformat(c["time"])
     x, y = o["last_xy"]
-    if o["telescope"] in ARCSEC_PX and measures_rolled(o):
+    if o["telescope"] in ARCSEC_PX and not o.get("ours") and measures_rolled(o):
         x, y = _lasco_turned(o["telescope"], t_o, x, y)
     ours = sky_place(INSTRUMENT.telescope, c["x"], c["y"], t)
     theirs = sky_place(o["telescope"], x, y, t_o)
@@ -554,7 +558,80 @@ def sky_agrees(o, track):
     # CCOR-2 sighting at 22.6 Rsun on 2026-11-12 01:15 was listed as likely the
     # CCOR-1 comet reported at 19.2 Rsun five hours earlier)
     inward = (ours[0] - theirs[0]) * (1 if signed >= 0 else -1) <= OTHER_R_SLOP
-    return bool(inward and dr <= OTHER_R_SLOP + OTHER_R_RATE * hours and dpa <= OTHER_PA_SLOP)
+    r_slop = OTHER_R_SLOP if r_slop is None else r_slop
+    pa_slop = OTHER_PA_SLOP if pa_slop is None else pa_slop
+    return bool(inward and dr <= r_slop + OTHER_R_RATE * hours and dpa <= pa_slop)
+
+
+# A LASCO track where one of our other watchers has seen a comet somebody
+# reported, at the same place on the sky at about the same time, is that
+# comet (how "sky"). LASCO has no orbits to match CCOR reports by, and a
+# report's own points can be most of a day upstream: Ruan's CCOR-2 comet
+# (his last point 23:45 on 2026-11-14) entered C2 at 18:00 on 11-15,
+# where CCOR-1 and CCOR-2 had it at 6.0 Rsun, PA -84.5, as C2 did at
+# 6.08, -84.1; C2 confirmed it as "unlikely Kreutz", no report anywhere.
+# Our own positions are measured, not a reporter's clicks, so the slop is
+# tighter than for a report's (OTHER_R_SLOP, OTHER_PA_SLOP).
+SIGHTINGS = INSTRUMENT.source == "lasco"
+SIGHTING_HOURS = 3.0
+SIGHTING_R_SLOP = 1.0
+SIGHTING_PA_SLOP = 5.0
+
+
+def our_sightings(t_first, t_last):
+    """Our other watchers' sightings of reported comets from SIGHTING_HOURS
+    before t_first to as long after t_last, in other_kreutz's form: the
+    report's reporter, id, posted_utc, kind and group, with "telescope",
+    "last_utc" and "last_xy" the sighting's (the watcher's instrument and
+    its position there) and "report_telescope" the report's. From each
+    watcher's log (decisions on objects it matched to a report) and its
+    status (what it's following now)."""
+    lo, hi = t_first - timedelta(hours=SIGHTING_HOURS), t_last + timedelta(hours=SIGHTING_HOURS)
+    out = []
+    for inst in INSTRUMENTS.values():
+        if inst.key == INSTRUMENT.key:
+            continue
+        d = DATA / f"live{inst.tag}"
+        rows = []
+        try:
+            with open(d / "log.jsonl") as fh:
+                for ln in fh:
+                    try:
+                        r = json.loads(ln)
+                    except ValueError:
+                        continue
+                    if (r.get("known") or {}).get("id") and r.get("last") and "x" in r:
+                        rows.append((r["known"], r["last"], r["x"], r["y"]))
+        except OSError:
+            pass
+        try:
+            for f in json.loads((d / "status.json").read_text()).get("following") or ():
+                if (f.get("known") or {}).get("id") and f.get("last_seen"):
+                    rows.append((f["known"], f["last_seen"], f["x"], f["y"]))
+        except (OSError, ValueError):
+            pass
+        for k, last, x, y in rows:
+            if lo <= datetime.fromisoformat(last) <= hi:
+                out.append({"reporter": k.get("reporter"), "id": k["id"], "posted_utc": k.get("posted_utc"),
+                            "kind": k.get("kind"), "group": k.get("group"), "report_telescope": k.get("telescope"),
+                            "telescope": inst.telescope, "last_utc": last[:19], "last_xy": [float(x), float(y)],
+                            "ours": True})
+    return out
+
+
+def sighted(track):
+    """The report whose comet one of our other watchers saw where `track`
+    is (our_sightings, sky_agrees at SIGHTING_*_SLOP), as a known record
+    with how "sky" and "seen_in" the watcher's instrument; None."""
+    fits = [o for o in our_sightings(datetime.fromisoformat(track[0]["time"]),
+                                     datetime.fromisoformat(track[-1]["time"]))
+            if sky_agrees(o, track, SIGHTING_R_SLOP, SIGHTING_PA_SLOP)]
+    if not fits:
+        return None
+    o = min(fits, key=lambda o: o["posted_utc"] or "")
+    return {"reporter": o["reporter"], "id": o["id"], "telescope": o["report_telescope"],
+            "posted_utc": o["posted_utc"], "kind": o["kind"], "group": o["group"],
+            "how": "sky", "seen_in": o["telescope"]}
 
 
 def plausible(o, track):
@@ -689,11 +766,20 @@ def cfar(cands, threshold, t, what=""):
     return cands
 
 
-def pageworthy(c, sun_xy):
-    """Does a candidate move like a sungrazer: at the Sun, within
-    PAGE_HEADING, at the instrument's page_speed or more?"""
+def pageworthy(c, sun_xy, px=None):
+    """Does a candidate move like a sungrazer: at the instrument's
+    page_speed or more, and at the Sun within PAGE_HEADING, or on an
+    instrument with page_lane_px, within that of the Kreutz lane (px,
+    lane.lane_px)?"""
     off, speed = sunward(c, sun_xy)
-    return off <= PAGE_HEADING and speed >= INSTRUMENT.page_speed
+    if speed < INSTRUMENT.page_speed:
+        return False
+    if INSTRUMENT.page_lane_px is not None and px is not None:
+        return px <= INSTRUMENT.page_lane_px
+    return off <= PAGE_HEADING
+
+
+PAGE_GATE = "lane" if INSTRUMENT.page_lane_px is not None else "heading"
 
 
 def orbit_rms(track):
@@ -1367,6 +1453,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
             "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
+            "page_gate": f.get("page_gate"),
             "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
             "line_score": f.get("line_score"), "on_line": f.get("on_line"),
             "stack": stack_summary(f), "report_paged": f.get("report_paged"),
@@ -1686,6 +1773,11 @@ def main():
                     reps = latest_reports() or reps
                     reps_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     known_rep = reported_by(ch, t, reps) if reps else None
+                    if not known_rep and SIGHTINGS:
+                        try:
+                            known_rep = sighted(ch)
+                        except Exception as e:  # a check that can't run mustn't hold up an alert
+                            print(f"{t:%H:%M} sightings check failed: {e}", file=sys.stderr)
                     others = unclaimed(other_instruments(ch, reps), pending)
                     # A lane track while another coronagraph has a Kreutz comet
                     # in view: the same object. Not the other CCOR's, though:
@@ -1700,7 +1792,7 @@ def main():
                     stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
                     px = round(lane_px(field, c["x"], c["y"], seq.shape[0]))
                     off, speed = sunward(c, sun_xy)
-                    paged = pageworthy(c, sun_xy)
+                    paged = pageworthy(c, sun_xy, px)
                     motion_ok = paged  # heading and speed alone, before the orbit and line holds
                     found_by = "orbit" if all(k.get("found_by") == "orbit" for k in ch) else None
                     held = found_by and paged and not args.orbit_pages
@@ -1734,6 +1826,7 @@ def main():
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
                          "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged,
+                         "page_gate": PAGE_GATE,
                          "found_by": found_by, "orbit_rms": rms, "off_orbit": off_orbit,
                          "line_score": line, "on_line": on_line, "revived": revived,
                          "stack": st.summary() if st else None, "page": page_kind,
@@ -1746,6 +1839,7 @@ def main():
                     quiet = None if paged else "found by the orbit search only, not paged" if held \
                         else f"fits no Kreutz orbit ({rms}\"), not paged" if off_orbit \
                         else f"a line runs through it ({line:.1f}), not paged" if on_line \
+                        else f"{px} px off the Kreutz lane at {speed:.1f} px/frame, not paged" if PAGE_GATE == "lane" \
                         else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                     if known_rep:
                         remember(c, f"reported: {who(known_rep)}")
@@ -1768,6 +1862,7 @@ def main():
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
                                     "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px,
                                     "heading_deg": round(off), "paged": paged, "found_by": found_by,
+                                    "page_gate": PAGE_GATE,
                                     "orbit_rms": rms, "off_orbit": off_orbit, "line_score": line, "on_line": on_line,
                                     "decided_utc": now_utc.isoformat(timespec="seconds"),
                                     "stack": st.to_dict() if st else None, "report_paged": page_kind == "report",
