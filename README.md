@@ -244,7 +244,11 @@ is written with the report block ready for Sungrazer's form.
   there. Its low "no action" page was noise (eleven in five days, every
   one faded unreported).
 - Nothing for a comet matched to somebody's report in the same instrument,
-  at any stage; the status page shows it with the report.
+  at any stage; the status page shows it with the report. On LASCO that
+  includes a comet one of our other watchers saw at the same place on the
+  sky at about the same time, matched to a report there ("by sky"): Ruan's
+  CCOR-2 comet entering C2 on 2026-11-15 had paged "confirmed, unlikely
+  Kreutz".
 - Nothing for a candidate held by a gate (below) until it's confirmed, and
   then a quiet page saying why it was held, unless the orbit search found it.
 
@@ -281,7 +285,10 @@ orbit, and on CCOR-2 when a straight line runs through the track in its
 own stack, which is how its recurring stray-light streak looks (it lies
 along the lane and slides along itself, so it moves like a sungrazer).
 A held track is followed like any other, and its confirmation pages in
-full.
+full. C2 pages on distance from the Kreutz lane (40 px) instead of the
+heading: its comets curve in toward the Sun, and four of its nine real
+alerts of 2026-10-24..11-15 pointed 22-42 degrees off sunward, while all
+nine ran within 30 px of the lane.
 With `--orbit-threshold T` the orbit-constrained search runs on every
 window too, at threshold T; its candidates join the full search's and
 are linked, vetted and followed with them. A track made only of orbit

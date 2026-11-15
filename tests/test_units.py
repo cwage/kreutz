@@ -374,6 +374,52 @@ def test_status_badge_counts_from_the_first_find_of_the_comet():
     assert r["first_found_utc"] == "2026-11-14T23:00:00"
 
 
+def test_c2_pages_by_the_lane_not_the_heading(monkeypatch):
+    from kreutz.instrument import INSTRUMENTS
+    from kreutz import notify
+    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["c2"])
+    sun = INSTRUMENTS["c2"].sun_xy
+    # Ruan's comet entering C2, 2026-11-15 19:12: 26 deg off sunward, 22 px from the lane
+    c = {"x": 528.0, "y": 942.0, "vx": -6.0, "vy": -11.0}
+    assert live.sunward(c, sun)[0] > live.PAGE_HEADING
+    assert live.pageworthy(c, sun, 22) and not live.pageworthy(c, sun, 139)
+    assert not live.pageworthy(dict(c, vx=-1.0, vy=-1.0), sun, 22)  # too slow either way
+    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["c3"])  # C3 keeps the heading gate
+    assert not live.pageworthy(c, sun, 22)
+    d = {"track": [dict(c, time="2026-11-15T19:12:33")], "paged": False, "page_gate": "lane", "lane_px": 139,
+         "heading_deg": 11, "known": None}
+    assert notify.held_because(d) == "not paged (139 px off the Kreutz lane or too slow)"
+
+
+def test_lasco_knows_a_comet_our_other_watchers_saw(monkeypatch, tmp_path):
+    # Ruan's CCOR-2 comet (his last point 23:45 on 2026-11-14) entered C2 at
+    # 18:00 on 11-15, where CCOR-1 and CCOR-2 had it; C2 confirmed it as
+    # "unlikely Kreutz", no report anywhere
+    from kreutz.instrument import INSTRUMENTS
+    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["c2"])
+    monkeypatch.setattr(live, "DATA", tmp_path)
+    known = {"reporter": "Jiangao Ruan", "id": "report_jr_20261114190228", "telescope": "CCOR2",
+             "posted_utc": "2026-11-15T00:02:28Z", "kind": "Potential Comet", "group": "Kreutz", "how": "orbit"}
+    (tmp_path / "live-ccor2").mkdir()
+    (tmp_path / "live-ccor2" / "log.jsonl").write_text(
+        json.dumps({"kind": "ended", "decided_utc": "2026-11-15T19:00:00", "first": "2026-11-15T11:30:14",
+                    "last": "2026-11-15T18:15:14", "x": 1052.0, "y": 1213.0, "known": known}) + "\n"
+        + json.dumps({"kind": "faded", "decided_utc": "2026-11-15T02:00:00", "first": "2026-11-15T01:00:00",
+                      "last": "2026-11-15T01:30:00", "x": 1300.0, "y": 1500.0}) + "\n")  # nobody's: no sighting
+    # where each camera's pixel is on the sky: (Rsun, PA), as sky_place gives it
+    places = {("CCOR2", 1052.0, 1213.0): (5.87, -85.0), ("C2", 539.0, 963.0): (5.55, -86.3),
+              ("C2", 300.0, 500.0): (5.5, -40.0)}
+    monkeypatch.setattr(live, "sky_place", lambda tel, x, y, t: places.get((tel, x, y)))
+    monkeypatch.setattr(live, "measures_rolled", lambda o: pytest.fail("our own positions are north up"))
+    track = [{"time": "2026-11-15T18:48:34", "x": 539.0, "y": 963.0, "vx": -5.5, "vy": -11.0}]
+    k = live.sighted(track)
+    assert (k["id"], k["telescope"], k["how"], k["seen_in"]) == (known["id"], "CCOR2", "sky", "CCOR2")
+    assert live.sighted([dict(track[0], x=300.0, y=500.0)]) is None  # elsewhere on the sky
+    assert live.sighted([dict(track[0], time="2026-11-15T23:00:00")]) is None  # hours after the sighting
+    from kreutz import notify
+    assert notify.compose({"track": track, "known": k, "paged": True, "page": None}, "a.json") is None
+
+
 def test_notify_is_quiet_about_known_comets():
     from kreutz import notify
     track = [{"time": "2026-10-09T11:30:25", "x": 1893.0, "y": 1219.0, "vx": -9.0, "vy": -2.0}]
