@@ -1388,6 +1388,21 @@ def open_tracks(chains):
 # that morning (C2 07:00, C3 09:42) were residue of that.
 BG_MAX_GAP = timedelta(hours=2)
 
+# How late a frame can land and still be searched. NASA's lastimage feed
+# sends LASCO frames in late batches most days: over 2026-11-09..14 a
+# tenth of C2's and C3's frames landed more than 3.4 h after they were
+# taken, the latest 5.4 h after. The watcher loaded the frames of the last
+# history + 2 h only, and a window needs BG_FRAMES + BG_SKIP + n frames
+# before it, so a window landing more than about 4.2 h late (C2) was
+# never searched, five C2 and C3 frames in a hundred: C2's frames of
+# 03:24-04:48 on 11-14 landed at 08:41 and the search began at 05:00.
+# (The known comet Kracht reported entering C2 at 03:13-04:29 was in
+# them, but it isn't in the significance maps either: 0.4 at its points
+# over 12 frames, scripts/report-stack.py, and a replay with the frames
+# searched chained nothing on its path.) The follow-up skips a frame older
+# than what it has measured, so a late one can't count as a miss.
+LATE = timedelta(hours=6)
+
 
 def run_starts(times):
     """For each frame, the index of the first frame of its run: the frames
@@ -1418,7 +1433,7 @@ def main():
                     help="delete frames and significance maps more than N days old (N >= 1); "
                          "the frames directory is kreutz.fetch's too, so this deletes archive frames")
     args = ap.parse_args()
-    # The watcher works on the last ~11 h of frames and sync() re-downloads
+    # The watcher works on the last 14-19 h of frames and sync() re-downloads
     # anything missing from that span, so a day is the floor.
     if args.keep_days is not None and args.keep_days < 1:
         ap.error("--keep-days must be at least 1")
@@ -1427,17 +1442,26 @@ def main():
     page.write()  # the one status page over every instrument, data/index.html
     longest = max(args.n, args.orbit_long[0] if args.orbit_long else 0)
     history = CADENCE * (BG_FRAMES + BG_SKIP + STAR_FRAMES + longest + args.link)
+    recent = history + timedelta(hours=2)  # the frames a window now needs, and some
+    span = recent + LATE  # the frames loaded, and the windows remembered as searched
     # done: windows searched; chains: open tracks, as in evaluate.tracks;
     # pending: alerted objects still being followed. Resumed from the last
     # save when it's recent enough to matter.
-    done, chains, pending = load_state(datetime.now(timezone.utc).replace(tzinfo=None), history + timedelta(hours=2))
+    started = datetime.now(timezone.utc).replace(tzinfo=None)
+    done, chains, pending = load_state(started, span)
     if done:
         print(f"resumed: {len(done)} windows searched through {max(done):%Y-%m-%d %H:%M}, "
               f"{len(chains)} open tracks, {len(pending)} follow-ups", file=sys.stderr)
+    # Windows before this are left alone: what the saved state doesn't
+    # cover was searched or given up on before (a state saved with a
+    # shorter span; LATE more of them would be searched again, out of
+    # order, alerts and all), and a clean start searches what it did
+    # before LATE. A late window is newer than that.
+    floor = min(done) if done else started - recent
 
     def checkpoint(t):
         try:
-            save_state(done, chains, pending, history + timedelta(hours=2))
+            save_state(done, chains, pending, span)
         except Exception as e:  # disk trouble must not take the watcher down
             print(f"{t:%H:%M} state error: {e}", file=sys.stderr)
     field = None  # the Kreutz lane, built once a frame shape is known
@@ -1446,16 +1470,16 @@ def main():
     last_waiting = None  # the last "waiting after a data gap" note said
     while True:
         try:
-            new = sync(datetime.now(timezone.utc).replace(tzinfo=None) - history - timedelta(hours=1))
+            new = sync(datetime.now(timezone.utc).replace(tzinfo=None) - span + timedelta(hours=1))
         except Exception as e:  # the feed hiccups; just try again
             print(f"{datetime.now(timezone.utc).replace(tzinfo=None):%H:%M} feed error: {e}", file=sys.stderr)
             time.sleep(POLL_S)
             continue
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        paths = frame_paths(now - history - timedelta(hours=2), now)
-        if not paths:  # the feed has been dry longer than the window (LASCO, 2026-11-04)
+        paths = frame_paths(now - span, now)
+        if not frame_paths(now - recent, now):  # the feed has been dry longer than the window (LASCO, 2026-11-04)
             if last_waiting != "dry":
-                print(f"{now:%Y-%m-%d %H:%M}: no frames since {now - history - timedelta(hours=2):%m-%d %H:%M}, "
+                print(f"{now:%Y-%m-%d %H:%M}: no frames since {now - recent:%m-%d %H:%M}, "
                       f"waiting for the feed", flush=True)
                 last_waiting = "dry"
             time.sleep(POLL_S)
@@ -1466,7 +1490,7 @@ def main():
             field = lane_field(now) if seq.shape == (FRAME_ROWS, FRAME_COLS) else build_field(seq.shape, when=now)
         need_before = BG_FRAMES + BG_SKIP + args.n
         starts = run_starts(seq.times)
-        todo = [i for i, t in enumerate(seq.times) if t not in done and i - starts[i] >= need_before]
+        todo = [i for i, t in enumerate(seq.times) if t not in done and t >= floor and i - starts[i] >= need_before]
         # After a gap in the feed a search waits for need_before frames
         # since the gap, so the background it subtracts is built from
         # frames after it: say so, and keep the status page fresh

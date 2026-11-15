@@ -1484,6 +1484,11 @@ def test_a_skipped_window_still_follows_up_its_frame(monkeypatch, tmp_path):
     t0 = datetime(2026, 11, 12, 12, 0)
     times = [t0 + live.CADENCE * k for k in range(live.BG_FRAMES + live.BG_SKIP + 4 + 2)]
 
+    class Now(datetime):  # the frames are the newest there are
+        @classmethod
+        def now(cls, tz=None):
+            return times[-1].replace(tzinfo=timezone.utc) if tz else times[-1]
+
     class Seq:
         def __init__(self, paths):
             self.times, self.shape = times, (8, 8)
@@ -1509,6 +1514,7 @@ def test_a_skipped_window_still_follows_up_its_frame(monkeypatch, tmp_path):
     def stop(s):
         raise Stop
 
+    monkeypatch.setattr(live, "datetime", Now)
     monkeypatch.setattr(live, "LIVE", tmp_path)
     monkeypatch.setattr(live.page, "write", lambda: None)
     monkeypatch.setattr(live, "load_state", lambda now, span: (set(), [], [{"alert": "a.json"}]))
@@ -1526,6 +1532,64 @@ def test_a_skipped_window_still_follows_up_its_frame(monkeypatch, tmp_path):
     with pytest.raises(Stop):
         live.main()
     assert followed == times[-2:]
+
+
+def test_a_window_that_lands_late_is_searched_but_not_one_from_before_the_state(monkeypatch, tmp_path):
+    # C2's frames of 03:24-04:48 on 2026-11-14 landed at 08:41, after the
+    # windows from 05:00 on were searched: the watcher only loaded the
+    # frames of the last history + 2 h, and those windows were never
+    # searched
+    now = datetime(2026, 11, 14, 8, 43, 40)
+    times = sorted(now - live.CADENCE * k for k in range(int(timedelta(hours=24) / live.CADENCE)))
+    late = [t for t in times if now - timedelta(hours=5.5) <= t <= now - timedelta(hours=4)]
+    done = {t for t in times if now - timedelta(hours=10) <= t and t not in late}
+
+    class Now(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.replace(tzinfo=timezone.utc) if tz else now
+
+    class Seq:
+        def __init__(self, paths):
+            self.times, self.shape = [times[int(p[1:])] for p in paths], (8, 8)
+
+        def sun_rc(self):
+            return 4, 4
+
+        def rc_to_report(self, r, c):
+            return c, r
+
+    searched = []
+
+    def search(seq, last, n, thr):
+        searched.append(seq.times[last])
+        raise ValueError("not searched here")
+
+    class Stop(Exception):
+        pass
+
+    def stop(s):
+        raise Stop
+
+    monkeypatch.setattr(live, "datetime", Now)
+    monkeypatch.setattr(live, "LIVE", tmp_path)
+    monkeypatch.setattr(live.page, "write", lambda: None)
+    monkeypatch.setattr(live, "load_state", lambda now, span: (set(done), [], []))
+    monkeypatch.setattr(live, "save_state", lambda *a, **k: None)
+    monkeypatch.setattr(live, "sync", lambda since: 0)
+    monkeypatch.setattr(live, "frame_paths", lambda a, b: [f"f{k}" for k, t in enumerate(times) if a <= t <= b])
+    monkeypatch.setattr(live, "Sequence", Seq)
+    monkeypatch.setattr(live, "lane_field", lambda now: None)
+    monkeypatch.setattr(live, "build_field", lambda shape, when=None: None)
+    monkeypatch.setattr(live, "search", search)
+    monkeypatch.setattr(live, "follow_up", lambda seq, last, pending, *a, **k: pending)
+    monkeypatch.setattr(live, "write_status", lambda *a, **k: None)
+    monkeypatch.setattr(live.time, "sleep", stop)
+    monkeypatch.setattr("sys.argv", ["kreutz.live"])
+    with pytest.raises(Stop):
+        live.main()
+    # the late windows, and nothing from before the oldest window the state remembers
+    assert searched == late
 
 
 def test_orbit_fit_keeps_the_perihelion_time_in_range():
