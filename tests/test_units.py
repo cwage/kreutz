@@ -1497,6 +1497,24 @@ def test_orbit_match_ties_a_report_to_a_track_a_day_later(monkeypatch):
     assert orbitsearch.joint_rms(best, track, other) > orbitsearch.SAME_RMS
 
 
+def test_a_ccor_point_east_of_the_sun_is_a_negative_longitude(monkeypatch):
+    from kreutz import orbitsearch
+    from kreutz.instrument import INSTRUMENTS
+    # the CCOR WCS answers 0..360: 1.5 deg east of the Sun is 358.5
+    wcs = types.SimpleNamespace(wcs_pix2world=lambda xy, origin: np.array([[358.5, -2.0]]))
+    monkeypatch.setattr(orbitsearch, "_frame_near", lambda inst, t: "frame.fits")
+    monkeypatch.setattr(orbitsearch, "_wcs", lambda path: (wcs, 1920, 2048))
+    t = datetime(2026, 11, 22, 1, 30)
+    ts, tx, ty = orbitsearch.sky_points([(t, 824, 1260)], INSTRUMENTS["ccor2"])
+    assert tx == [pytest.approx(-1.5)] and ty == [pytest.approx(-2.0)]
+    r, pa = live.sky_place("CCOR2", 824, 1260, t)
+    assert r == pytest.approx(np.hypot(1.5, 2.0) * 3600 / live.RSUN_ARCSEC)  # 9.4, not 1345
+    assert pa == pytest.approx(np.degrees(np.arctan2(-2.0, -1.5)))
+    # and west of it stays as it was
+    wcs.wcs_pix2world = lambda xy, origin: np.array([[1.25, -2.0]])
+    assert orbitsearch.sky_points([(t, 1224, 1260)], INSTRUMENTS["ccor2"])[1] == [pytest.approx(1.25)]
+
+
 def test_orbit_match_across_instruments(monkeypatch):
     from kreutz import orbit, orbitsearch
     from kreutz.instrument import INSTRUMENTS

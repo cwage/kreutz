@@ -501,13 +501,13 @@ def sky_place(telescope, x, y, t):
             sx, sy = inst.sun_xy
             tx, ty = (x - sx) * ARCSEC_PX[telescope], -(y - sy) * ARCSEC_PX[telescope]
         else:
-            from .orbitsearch import _frame_near, _wcs
+            from .orbitsearch import _frame_near, _wcs, signed_lon
             path = _frame_near(inst, t)
             if path is None:
                 return None
             w, H, _ = _wcs(path)
             lon, lat = w.wcs_pix2world([[x, H - 1 - y]], 0)[0]
-            tx, ty = float(lon) * 3600, float(lat) * 3600
+            tx, ty = signed_lon(lon) * 3600, float(lat) * 3600
     except Exception as e:
         print(f"sky place ({telescope}): {e}", file=sys.stderr)
         return None
