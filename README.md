@@ -288,7 +288,14 @@ A held track is followed like any other, and its confirmation pages in
 full. C2 pages on distance from the Kreutz lane (40 px) instead of the
 heading: its comets curve in toward the Sun, and four of its nine real
 alerts of 2026-10-24..11-15 pointed 22-42 degrees off sunward, while all
-nine ran within 30 px of the lane.
+nine ran within 30 px of the lane. CCOR-2 and C3 page on how far the
+motion is off the Kreutz lane's flow at that spot (20 degrees) where a
+lane sample is within 200 px, and on the heading farther out: their
+comets' heading at the Sun drifts with the season (CCOR-2's went from
+4-9 degrees in October to 25 on 2026-11-22, a new user's comet that was
+held), while the lane, built from the last month's reports, follows it.
+`scripts/flow-gate-check.py` replays an instrument's past alerts against
+both tests.
 With `--orbit-threshold T` the orbit-constrained search runs on every
 window too, at threshold T; its candidates join the full search's and
 are linked, vetted and followed with them. A track made only of orbit
