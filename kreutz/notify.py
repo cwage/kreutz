@@ -95,8 +95,9 @@ def compose(d, name):
     elif far and d.get("off_orbit"):
         hint += f"; fits no Kreutz orbit ({d['orbit_rms']}\")"
     elif far:
-        hint += (f"; {d['heading_deg']} deg off sunward" if "heading_deg" in d and d.get("page_gate") != "lane"
-                 else f"; {d['lane_px']} px off the Kreutz lane")
+        hint += (f"; {d['lane_px']} px off the Kreutz lane" if d.get("page_gate") == "lane" or "heading_deg" not in d
+                 else f"; {d['flow_deg']} deg off the Kreutz lane's flow" if d.get("page_gate") == "flow"
+                 else f"; {d['heading_deg']} deg off sunward")
     if confirmed and far and d.get("found_by") != "orbit" and not d.get("on_line"):
         return (f"{who}: confirmed, unlikely Kreutz",
                 [f"Held {d['frames']} frames, {d['note']}; {hint}. Wasn't paged as a candidate.",
@@ -181,6 +182,8 @@ def held_because(d):
         return f"fits no Kreutz orbit ({d['orbit_rms']}\")"
     if d.get("page_gate") == "lane":
         return f"not paged ({d.get('lane_px')} px off the Kreutz lane or too slow)"
+    if d.get("page_gate") == "flow":
+        return f"not paged ({d.get('flow_deg')} deg off the Kreutz lane's flow or too slow)"
     if "heading_deg" in d:
         return f"not paged ({d['heading_deg']} deg off sunward or too slow)"
     return f"{d.get('lane_px')} px off the Kreutz lane"

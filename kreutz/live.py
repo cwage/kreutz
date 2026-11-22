@@ -66,7 +66,11 @@ Ruan's, ran 273 px from the nearest track, and its first page was held
 back for 15 minutes.) "lane_px", that distance, is still written for
 the record. C2 pages on it instead of the heading (page_lane_px, "page_gate":
 "lane"): its comets curve in, and four of its nine real ones pointed
-22-42 deg off sunward. On CCOR-1 a pageworthy track must also fit a Kreutz family
+22-42 deg off sunward. CCOR-2 and C3 page on the angle between the
+motion and the lane's flow where a lane sample is near (page_flow_px,
+PAGE_FLOW, "page_gate": "flow", "flow_deg"), and on the heading farther
+out: their comets' heading drifts with the season (CCOR-2's from 4-9 deg
+in October to 25 on 2026-11-22) while the lane follows it. On CCOR-1 a pageworthy track must also fit a Kreutz family
 orbit (orbitsearch.orbit_of) to OFF_ORBIT_RMS, or it's "off_orbit" and
 held the same way, with "orbit_rms" written. Replayed over CCOR-1's
 alerts of 2026-10-08..28, every one matched to a CCOR-1 report fit to
@@ -137,7 +141,7 @@ from . import DATA, page
 from .instrument import CURRENT as INSTRUMENT, INSTRUMENTS
 from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, link_miss, matches, measures_rolled, moves, other_kreutz,
                        report_points)
-from .lane import build_field, in_lane, lane_px, off_flow
+from .lane import build_field, flow_at, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, CADENCE, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
 from .report import MIN_POINTS, block, fit, measure
@@ -776,20 +780,44 @@ def cfar(cands, threshold, t, what=""):
     return cands
 
 
-def pageworthy(c, sun_xy, px=None):
+PAGE_FLOW = 20  # deg off the Kreutz lane's flow, for an instrument with page_flow_px
+
+
+def flow_off(field, c, H):
+    """Degrees between a candidate's motion and the Kreutz lane's flow at
+    its position (lane.flow_at)."""
+    fx, fy = flow_at(field, c["x"], c["y"], H)
+    cos = (c["vx"] * fx + c["vy"] * fy) / (np.hypot(c["vx"], c["vy"]) * np.hypot(fx, fy) + 1e-30)
+    return float(np.degrees(np.arccos(np.clip(cos, -1, 1))))
+
+
+def page_gate(px=None, flow=None):
+    """Which direction test pages a candidate: "lane" (its distance px
+    from the lane, page_lane_px), "flow" (its angle to the lane's flow,
+    where a lane sample is within page_flow_px), or "heading" (its angle
+    to straight at the Sun)."""
+    if INSTRUMENT.page_lane_px is not None and px is not None:
+        return "lane"
+    if INSTRUMENT.page_flow_px is not None and px is not None and flow is not None \
+            and px <= INSTRUMENT.page_flow_px:
+        return "flow"
+    return "heading"
+
+
+def pageworthy(c, sun_xy, px=None, flow=None):
     """Does a candidate move like a sungrazer: at the instrument's
-    page_speed or more, and at the Sun within PAGE_HEADING, or on an
-    instrument with page_lane_px, within that of the Kreutz lane (px,
-    lane.lane_px)?"""
+    page_speed or more, and by its page_gate: within page_lane_px of the
+    Kreutz lane (px, lane.lane_px), within PAGE_FLOW of the lane's flow
+    (flow, flow_off), or within PAGE_HEADING of straight at the Sun?"""
     off, speed = sunward(c, sun_xy)
     if speed < INSTRUMENT.page_speed:
         return False
-    if INSTRUMENT.page_lane_px is not None and px is not None:
+    gate = page_gate(px, flow)
+    if gate == "lane":
         return px <= INSTRUMENT.page_lane_px
+    if gate == "flow":
+        return flow <= PAGE_FLOW
     return off <= PAGE_HEADING
-
-
-PAGE_GATE = "lane" if INSTRUMENT.page_lane_px is not None else "heading"
 
 
 def orbit_rms(track):
@@ -1463,7 +1491,7 @@ def status(chains, pending, t, recent, now, rendered=lambda name: None,
             "x": f["x"], "y": f["y"], "vx": f["vx"], "vy": f["vy"],
             "known": with_url(f.get("known")), "others": len(f.get("others") or []),
             "lane_px": f.get("lane_px"), "heading_deg": f.get("heading_deg"), "paged": f.get("paged"),
-            "page_gate": f.get("page_gate"),
+            "page_gate": f.get("page_gate"), "flow_deg": f.get("flow_deg"),
             "found_by": f.get("found_by"), "orbit_rms": f.get("orbit_rms"), "off_orbit": f.get("off_orbit"),
             "line_score": f.get("line_score"), "on_line": f.get("on_line"),
             "stack": stack_summary(f), "report_paged": f.get("report_paged"),
@@ -1805,8 +1833,10 @@ def main():
                     # kind and the notification differ.
                     stem = LIVE / "alerts" / f"{t:%Y%m%dT%H%M}_{c['x']:.0f}_{c['y']:.0f}"
                     px = round(lane_px(field, c["x"], c["y"], seq.shape[0]))
+                    flow = round(flow_off(field, c, seq.shape[0]))
+                    gate = page_gate(px, flow)
                     off, speed = sunward(c, sun_xy)
-                    paged = pageworthy(c, sun_xy, px)
+                    paged = pageworthy(c, sun_xy, px, flow)
                     motion_ok = paged  # heading and speed alone, before the orbit and line holds
                     found_by = "orbit" if all(k.get("found_by") == "orbit" for k in ch) else None
                     held = found_by and paged and not args.orbit_pages
@@ -1839,8 +1869,8 @@ def main():
                     stem.with_suffix(".json").write_text(json.dumps(
                         {"track": ch, "decided_utc": now_utc.isoformat(timespec="seconds"),
                          "reports_checked": reps is not None, "other_instruments": others,
-                         "known": known_rep, "lane_px": px, "heading_deg": round(off), "paged": paged,
-                         "page_gate": PAGE_GATE,
+                         "known": known_rep, "lane_px": px, "heading_deg": round(off), "flow_deg": flow,
+                         "paged": paged, "page_gate": gate,
                          "found_by": found_by, "orbit_rms": rms, "off_orbit": off_orbit,
                          "line_score": line, "on_line": on_line, "revived": revived,
                          "stack": st.summary() if st else None, "page": page_kind,
@@ -1853,7 +1883,8 @@ def main():
                     quiet = None if paged else "found by the orbit search only, not paged" if held \
                         else f"fits no Kreutz orbit ({rms}\"), not paged" if off_orbit \
                         else f"a line runs through it ({line:.1f}), not paged" if on_line \
-                        else f"{px} px off the Kreutz lane at {speed:.1f} px/frame, not paged" if PAGE_GATE == "lane" \
+                        else f"{px} px off the Kreutz lane at {speed:.1f} px/frame, not paged" if gate == "lane" \
+                        else f"{flow} deg off the Kreutz lane's flow at {speed:.1f} px/frame, not paged" if gate == "flow" \
                         else f"{off:.0f} deg off sunward at {speed:.1f} px/frame, not paged"
                     if known_rep:
                         remember(c, f"reported: {who(known_rep)}")
@@ -1865,7 +1896,7 @@ def main():
                         remember(c, f"alert: {stem.name}")
                         log("alert", ch, now_utc, alert=str(stem.with_suffix(".json")),
                             reports_checked=reps is not None, others=others, lane_px=px,
-                            heading_deg=round(off), paged=paged, note=quiet)
+                            heading_deg=round(off), flow_deg=flow, page_gate=gate, paged=paged, note=quiet)
                         hint = f"; {len(others)} Kreutz report(s) from other instruments in the last day" \
                             if others else ""
                         if revived:
@@ -1875,8 +1906,8 @@ def main():
                     pending.append({"alert": str(stem.with_suffix(".json")), "track": ch, "others": others,
                                     "known": known_rep, "points": pts, "t": t, "x": c["x"], "y": c["y"],
                                     "vx": c["vx"], "vy": c["vy"], "misses": 0, "lane_px": px,
-                                    "heading_deg": round(off), "paged": paged, "found_by": found_by,
-                                    "page_gate": PAGE_GATE,
+                                    "heading_deg": round(off), "flow_deg": flow, "paged": paged,
+                                    "found_by": found_by, "page_gate": gate,
                                     "orbit_rms": rms, "off_orbit": off_orbit, "line_score": line, "on_line": on_line,
                                     "decided_utc": now_utc.isoformat(timespec="seconds"),
                                     "stack": st.to_dict() if st else None, "report_paged": page_kind == "report",

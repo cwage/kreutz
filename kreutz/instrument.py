@@ -82,6 +82,20 @@ class Instrument:
     # from the lane; at 40 px, eleven of its false alerts would have paged
     # against twenty-one by heading.
     page_lane_px: float = None
+    # px: when set, a candidate within this of a lane sample is paged on
+    # how far its motion is off the lane's flow there (lane.flow_at,
+    # live.PAGE_FLOW) instead of off straight at the Sun; farther out, on
+    # the heading as before. The lane follows the season and the heading
+    # doesn't: CCOR-2's real comets pointed 4-9 deg off sunward in October,
+    # 17-20 by mid-November, and a new user's comet of 2026-11-22 01:30
+    # (reported 40 min after our alert) 25, held; all 27 since 10-20 ran
+    # 0-17 deg off the flow, that one 9. Replayed over those alerts with
+    # each lane as it stood before the alert (scripts/flow-gate-check.py):
+    # CCOR-2 pages 27 of 27 comets against 26 by heading, and 15 of its 35
+    # false alerts against 19; C3 7 of 8 against 6, false 15 of 38 either
+    # way. CCOR-1 gained no comet and paged five to seven more false
+    # alerts, so it keeps the heading.
+    page_flow_px: float = None
 
     @property
     def cadence(self):
@@ -203,7 +217,7 @@ INSTRUMENTS = {
                         # Holdren's CCOR-2 comet of 2026-11-11 21:15 came in 23 px from
                         # the bottom edge and our search, keeping 30 px clear, had too
                         # few frames of it in any window until long after his alert.
-                        20, season_days=30, edge_px=18),
+                        20, season_days=30, edge_px=18, page_flow_px=200.0),
     # sun_xy is CRPIX, which the level 0.5 headers hold fixed and which
     # lasco.load rotates about. Measured on the 2024-01..2026-10 Kreutz
     # reports (less those their reporter retracted within a day): C2's 479
@@ -221,7 +235,8 @@ INSTRUMENTS = {
                      "https://umbra.nascom.nasa.gov/pub/lasco/lastimage/level_05/",
                      "https://umbra.nascom.nasa.gov/pub/lasco_level05/", True, False,
                      120, 560, None, None, (518.2, 490.5), False, None, 8, 1.0, 48,
-                     source="lasco", cadence_min=12, shape=(1024, 1024), star_min_r=_STAR_MIN_R["c3"], **_LASCO),
+                     source="lasco", cadence_min=12, shape=(1024, 1024), star_min_r=_STAR_MIN_R["c3"],
+                     page_flow_px=200.0, **_LASCO),
 }
 
 _name = os.environ.get("KREUTZ_INSTRUMENT", "ccor1").lower()

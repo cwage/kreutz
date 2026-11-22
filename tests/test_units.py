@@ -384,11 +384,36 @@ def test_c2_pages_by_the_lane_not_the_heading(monkeypatch):
     assert live.sunward(c, sun)[0] > live.PAGE_HEADING
     assert live.pageworthy(c, sun, 22) and not live.pageworthy(c, sun, 139)
     assert not live.pageworthy(dict(c, vx=-1.0, vy=-1.0), sun, 22)  # too slow either way
-    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["c3"])  # C3 keeps the heading gate
+    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["c3"])  # no lane gate on C3, and no flow given
     assert not live.pageworthy(c, sun, 22)
     d = {"track": [dict(c, time="2026-11-15T19:12:33")], "paged": False, "page_gate": "lane", "lane_px": 139,
          "heading_deg": 11, "known": None}
     assert notify.held_because(d) == "not paged (139 px off the Kreutz lane or too slow)"
+
+
+def test_ccor2_pages_by_the_lane_flow_near_the_lane_and_the_heading_beyond(monkeypatch):
+    from kreutz.instrument import INSTRUMENTS
+    from kreutz import notify
+    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["ccor2"])
+    sun = INSTRUMENTS["ccor2"].sun_xy
+    # a new user's comet, 2026-11-22 01:30: 25 deg off sunward, held; the
+    # lane's flow 126 px away ran (-4.0,-6.1) where it moved (-2.5,-5.0)
+    c = {"x": 1019.0, "y": 1507.0, "vx": -2.5, "vy": -5.0}
+    assert live.sunward(c, sun)[0] > live.PAGE_HEADING
+    field = types.SimpleNamespace(tree=None)
+    monkeypatch.setattr(live, "flow_at", lambda f, x, y, H: (-4.0, -6.12))
+    flow = live.flow_off(field, c, 1920)
+    assert 5 < flow < 9
+    assert live.page_gate(126, flow) == "flow" and live.pageworthy(c, sun, 126, flow)
+    assert not live.pageworthy(c, sun, 126, 35.0)  # across the flow
+    assert not live.pageworthy(dict(c, vx=-1.0, vy=-1.5), sun, 126, flow)  # too slow either way
+    # no lane sample within 200 px: the heading, as before
+    assert live.page_gate(260, flow) == "heading" and not live.pageworthy(c, sun, 260, flow)
+    monkeypatch.setattr(live, "INSTRUMENT", INSTRUMENTS["ccor1"])  # CCOR-1 keeps the heading
+    assert live.page_gate(126, flow) == "heading"
+    d = {"track": [dict(c, time="2026-11-22T01:30:14")], "paged": False, "page_gate": "flow", "flow_deg": 31,
+         "lane_px": 126, "heading_deg": 25, "known": None}
+    assert notify.held_because(d) == "not paged (31 deg off the Kreutz lane's flow or too slow)"
 
 
 def test_lasco_knows_a_comet_our_other_watchers_saw(monkeypatch, tmp_path):
