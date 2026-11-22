@@ -71,6 +71,15 @@ def _wcs(path):
     return _WCS[path]
 
 
+def signed_lon(lon):
+    """A helioprojective longitude (deg) as -180..180. The CCOR WCS gives
+    HPLN as 0..360, so a point east of the Sun came out at 359.x deg:
+    sky_place put the CCOR-2 alert of 2026-11-22 01:30 (1019,1507, south
+    of the Sun and just east) 1345 Rsun out, and the orbit fits measured
+    such points against _sky's longitudes, which are -180..180."""
+    return (float(lon) + 180.0) % 360.0 - 180.0
+
+
 def _sky(e, dt_days, obs):
     """Helioprojective (deg) of orbit e at times dt_days from perihelion
     (array), seen from heliocentric `obs` (3,)."""
@@ -184,8 +193,8 @@ def sky_points(pts, inst=None):
         w, H, _ = _wcs(path)
         lon, lat = w.wcs_pix2world([[x, H - 1 - y]], 0)[0]
         ts.append(t)
-        tx.append(lon)
-        ty.append(lat)
+        tx.append(signed_lon(lon))
+        ty.append(float(lat))
     return ts, tx, ty
 
 
