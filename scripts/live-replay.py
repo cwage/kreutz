@@ -12,11 +12,14 @@ replay of the windows chained it by 08:48, the watcher never did).
 The watcher's own output goes to stderr with the frames' times; its
 files go under --out (default data/replay/<instrument>-<from>), which is
 emptied first, with the instrument's known.jsonl copied in so the replay
-remembers what the watcher remembered (as of now, not of then).
+remembers what the watcher remembered: the memories of objects seen
+before --from (a memory made since of the stretch replayed, such as a
+rejection, would hide the very object being replayed).
 --chains-near X Y prints, after each window, the chains whose newest
 candidate is within --near-r px (60) of (X, Y).
 """
 import argparse
+import json
 import shlex
 import shutil
 import sys
@@ -49,7 +52,13 @@ def main():
         shutil.rmtree(out)
     (out / "alerts").mkdir(parents=True)
     if (live.LIVE / "known.jsonl").exists():
-        shutil.copy(live.LIVE / "known.jsonl", out / "known.jsonl")
+        with open(live.LIVE / "known.jsonl") as src, open(out / "known.jsonl", "w") as dst:
+            for line in src:
+                try:
+                    if datetime.fromisoformat(json.loads(line)["time"][:19]) < args.start:
+                        dst.write(line)
+                except (ValueError, KeyError):
+                    continue
 
     clock = {"now": args.start}
 

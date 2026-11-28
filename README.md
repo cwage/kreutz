@@ -304,7 +304,12 @@ candidates is marked `"found_by": "orbit"` in its files and, unless
 A frame where only the
 search's stacked chain holds an object, and nothing is measured, keeps
 the follow-up alive but counts toward neither confirmation nor the report
-block; an object is confirmed on a frame it was measured in. With
+block; an object is confirmed on a frame it was measured in. Its measured
+frames have to lie on a straight line (`report.RESIDUAL_PER_FRAME`); one
+frame off the line, where the measurement landed on a star or a noise peak
+beside a faint comet, is left out of the line and of the report block, and
+when that leaves fewer than five the decision waits a frame. Two frames
+off the line, or a line no single frame bends, is rejected. With
 `--render`, a confirmed object's cutouts and pictures are made in the
 background under `data/render/`, and remade while it stays in view, so the
 pictures grow with the passage: every 4 frames early on, then whenever the
