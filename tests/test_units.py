@@ -735,25 +735,53 @@ def test_report_fit_gives_the_motion_and_the_residual():
     assert report.fit(pts[:1]) == (0.0, 0.0, 0.0)
 
 
+def test_one_frame_off_the_line_is_left_out_but_not_two():
+    t0 = datetime(2026, 11, 28, 9, 0, 25)
+    pts = [(t0 + timedelta(minutes=15 * k), 1426.0 - 4 * k, 1902.0 - 4.5 * k, 5.0) for k in range(6)]
+    assert report.inliers(pts) == (pts, None)
+    star = pts[:2] + [(pts[2][0], pts[2][1] + 7.0, pts[2][2], 4.1)] + pts[3:]
+    kept, out = report.inliers(star)
+    assert out == star[2] and kept == pts[:2] + pts[3:]
+    lines, note = report.block(star)
+    assert len(lines) == 5 and note.endswith("the 09:30 frame off the line left out")
+    two = star[:4] + [(pts[4][0], pts[4][1], pts[4][2] - 7.0, 4.1)] + pts[5:]
+    assert report.inliers(two) == (two, None)
+    assert report.inliers(star[:4]) == (star[:4], None)  # under MIN_POINTS: nothing left out
+
+
 def test_follow_up_rejects_what_does_not_lie_on_a_line(monkeypatch, tmp_path):
     import types
     t0 = datetime(2026, 10, 11, 6, 0, 25)
     logged, remembered = [], []
     monkeypatch.setattr(live, "log", lambda kind, track, decided, **extra: logged.append((kind, extra.get("note"))))
     monkeypatch.setattr(live, "remember", lambda c, why: remembered.append(why))
-    seq = types.SimpleNamespace(times=[t0 + timedelta(minutes=15 * k) for k in range(5)])
+    seq = types.SimpleNamespace(times=[t0 + timedelta(minutes=15 * k) for k in range(6)])
 
     def pending(points):
         return {"alert": str(tmp_path / "x.json"), "track": [], "others": [], "known": None, "points": list(points),
                 "t": points[-1][0], "x": points[-1][1], "y": points[-1][2], "vx": -9.0, "vy": -2.5, "misses": 0}
-    straight = [(seq.times[k], 1883.0 - 9 * k, 1210.0 - 2.5 * k, 6.0) for k in range(4)]
+
+    def on_line(k, dy=0.0):
+        return (seq.times[k], 1883.0 - 9 * k, 1210.0 - 2.5 * k + dy, 6.0)
+    straight = [on_line(k) for k in range(4)]
     # a fifth frame on the line: confirmed
-    monkeypatch.setattr(live, "measure", lambda *a, **k: [(seq.times[4], 1883.0 - 36, 1210.0 - 10, 6.0)])
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [on_line(4)])
     keep = live.follow_up(seq, 4, [pending(straight)], None)
     assert keep and keep[0]["confirmed"] and logged[-1][0] == "confirmed"
-    # a fifth frame 8 px off the line: rejected and dropped, remembered so it isn't raised again
-    monkeypatch.setattr(live, "measure", lambda *a, **k: [(seq.times[4], 1883.0 - 36, 1210.0 - 2, 6.0)])
+    # a fifth frame 8 px off the line (a star taken for the comet): neither, the
+    # decision waits for a sixth; on the line, that confirms, the fifth left out
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [on_line(4, 8.0)])
     keep = live.follow_up(seq, 4, [pending(straight)], None)
+    assert keep and not keep[0].get("confirmed") and logged[-1][0] == "confirmed" and len(logged) == 1
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [on_line(5)])
+    keep = live.follow_up(seq, 5, keep, None)
+    assert keep[0]["confirmed"] and logged[-1][0] == "confirmed" and "07:00 frame off the line left out" in logged[-1][1]
+    confirmed = json.load(open(tmp_path / "x.confirmed.json"))
+    assert len(confirmed["report"]) == 5 and "0700" not in " ".join(confirmed["report"])
+    # two frames off the line: rejected and dropped, remembered so it isn't raised again
+    crooked = straight[:2] + [on_line(2, -6.0)] + straight[3:]
+    monkeypatch.setattr(live, "measure", lambda *a, **k: [on_line(4, 8.0)])
+    keep = live.follow_up(seq, 4, [pending(crooked)], None)
     assert keep == [] and logged[-1][0] == "rejected" and "residual" in logged[-1][1] and remembered
     # five frames that don't move: rejected as stationary
     still = [(seq.times[k], 1247.0, 1625.0, 6.0) for k in range(4)]

@@ -30,6 +30,11 @@ from .vet import STATIONARY
 
 MIN_POINTS = 5
 CENTROID_R = 3
+# Measured frames have to lie on a line. The largest residual allowed grows
+# with the arc, since a comet accelerates: 0.5 px over 5 frames and 1.2-1.5
+# px over 14 for this season's real comets, 3.1 px over 6 for the glare
+# feature of 2026-10-11.
+RESIDUAL_PER_FRAME = 0.3
 FORM_URL = "https://sungrazer.nrl.navy.mil/report"
 
 
@@ -81,12 +86,42 @@ def fit(points):
     return float(px[0]), float(py[0]), float(resid)
 
 
+def straight(points):
+    """Do the points lie on a line (largest residual within
+    RESIDUAL_PER_FRAME a point)?"""
+    return fit(points)[2] <= RESIDUAL_PER_FRAME * len(points)
+
+
+def inliers(points):
+    """(the points on the line, the one left out or None): all of them when
+    they lie on a line; else, from MIN_POINTS on, all but the one whose
+    removal puts the rest on one, if one does; else all of them. One
+    frame's measurement can land on a star or a noise peak beside a faint
+    comet: CCOR-1's straight-line rejections were six, three of them real
+    comets (2026-11-09 01:45, 11-22 08:45 twice, 11-28 11:00, reported by
+    Barraclough), each bent by one frame, and replayed with this
+    (scripts/live-replay.py) each confirms at the rejection's own frame,
+    0.8-1.1 px over five with that frame left out (00:45, 07:45, 09:00);
+    the other two (10-13 07:15, 10-17 03:45) the watcher no longer alerts
+    on at all."""
+    points = list(points)
+    if len(points) < MIN_POINTS or straight(points):
+        return points, None
+    j = min(range(len(points)), key=lambda k: fit(points[:k] + points[k + 1:])[2])
+    rest = points[:j] + points[j + 1:]
+    return (rest, points[j]) if straight(rest) else (points, None)
+
+
 def block(points):
-    """The report lines, plus a one-line verdict on straightness."""
-    lines = [f"{t:%H%M} {x:.0f} {y:.0f}" for t, x, y, _ in points]
+    """The report lines, plus a one-line verdict on straightness. A frame
+    off the line that inliers() leaves out isn't reported."""
+    use, out = inliers(points)
+    lines = [f"{t:%H%M} {x:.0f} {y:.0f}" for t, x, y, _ in use]
     note = ""
-    if len(points) >= 3:
-        note = f"straight-line residual {fit(points)[2]:.1f} px over {len(points)} frames"
+    if len(use) >= 3:
+        note = f"straight-line residual {fit(use)[2]:.1f} px over {len(use)} frames"
+        if out is not None:
+            note += f", the {out[0]:%H:%M} frame off the line left out"
     return lines, note
 
 

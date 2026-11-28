@@ -144,7 +144,7 @@ from .evaluate import (CFAR_K, FRAME, LINK_DV, LINK_PX, link_miss, matches, meas
 from .lane import build_field, flow_at, in_lane, lane_px, off_flow
 from .reports import _fetch, parse, report_url
 from .frames import BG_FRAMES, BG_SKIP, CADENCE, L1B, SIG_CACHE, STAR_FRAMES, Sequence, frame_paths
-from .report import MIN_POINTS, block, fit, measure
+from .report import MIN_POINTS, RESIDUAL_PER_FRAME, block, fit, inliers, measure
 from .search import MAX_MISSING, R_MIN, consistent, search
 from .shortlist import FRAME_COLS, FRAME_ROWS, _known_by_position
 from .orbitsearch import FAMILIES, SAME_RMS, SEP_PX as ORBIT_SEP_PX, family_rms, joint_rms, orbit_of, orbit_search
@@ -1099,16 +1099,10 @@ def followed(c, t, pending):
     return False
 
 
-# A confirmation's measured frames have to lie on a line. The largest
-# residual allowed grows with the arc, since a comet accelerates: 0.5 px
-# over 5 frames and 1.2-1.5 px over 14 for this season's real comets,
-# 3.1 px over 6 for the glare feature of 2026-10-11.
-RESIDUAL_PER_FRAME = 0.3
-
-
 def unlikely(points, field=None, H=FRAME_ROWS):
     """Why measured frames aren't a comet, or None: they don't lie on a
-    line, the fitted motion is stationary, or it runs against the lane."""
+    line (report.RESIDUAL_PER_FRAME), the fitted motion is stationary, or
+    it runs against the lane."""
     vx, vy, resid = fit(points)
     if resid > RESIDUAL_PER_FRAME * len(points):
         return f"straight-line residual {resid:.1f} px over {len(points)} frames"
@@ -1223,8 +1217,12 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
         t, x, y, _ = pts[-1]
         f["vx"], f["vy"] = velocity or ((x - f["x"]) / dt, (y - f["y"]) / dt)
         f["t"], f["x"], f["y"] = t, x, y
-        if not f.get("confirmed") and len(f["points"]) >= MIN_POINTS:
-            why = unlikely(f["points"], field, seq.shape[0] if field is not None else FRAME_ROWS)
+        # one frame off the line (a star or a noise peak measured for the
+        # comet) is left out (report.inliers); with fewer than MIN_POINTS
+        # left the confirmation waits for the next frame
+        use, _ = inliers(f["points"])
+        if not f.get("confirmed") and len(use) >= MIN_POINTS:
+            why = unlikely(use, field, seq.shape[0] if field is not None else FRAME_ROWS)
             if why:
                 # A crooked line of faint points is the one rejection that can be
                 # wrong (the comet of 2026-11-09 01:45, 2-3 sigma a frame, 3.1 px
@@ -1233,7 +1231,8 @@ def follow_up(seq, last, pending, notify, render=False, chains=(), field=None):
                 # a veto.
                 remember(seen(f)[-1], f"alert: {Path(f['alert']).stem}" if why.startswith("straight-line")
                          else f"auto: {why}")
-                log("rejected", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=why)
+                log("rejected", seen(f), now, alert=f["alert"], frames=len(f["points"]), note=why,
+                    points=[[t.isoformat(), round(x, 1), round(y, 1), round(s, 1)] for t, x, y, s in f["points"]])
                 print(f"REJECTED {f['alert']} ({len(f['points'])} frames, {why})", flush=True)
                 continue
             f["confirmed"] = True
